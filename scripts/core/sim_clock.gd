@@ -12,6 +12,7 @@ const MAX_TICKS_PER_FRAME := 8
 var sim: Simulation
 var speed: int = Speed.NORMAL
 var _accum := 0.0
+var blocked := false  ## true while suspended (app in background) or catching up
 
 
 func ticks_per_second() -> float:
@@ -37,6 +38,5 @@ func _process(delta: float) -> void:
 		ticked.emit(n)
 
 
-## Overridden/extended by later milestones (e.g. blocked while catching up or game over).
 func can_tick() -> bool:
-	return true
+	return not blocked

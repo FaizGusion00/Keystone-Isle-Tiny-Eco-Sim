@@ -4,6 +4,7 @@ extends CanvasLayer
 ## tile inspector, bottom tool bar, toast messages.
 
 signal new_island_requested
+signal tutorial_requested
 signal speed_requested(speed: int)
 signal tool_selected(tool: int)
 signal overlay_requested
@@ -38,6 +39,7 @@ func _ready() -> void:
 	_build_tool_bar()
 	_build_events_panel()
 	_build_toast()
+	_build_popup()
 
 
 func _build_top_bar() -> void:
@@ -67,6 +69,9 @@ func _build_top_bar() -> void:
 		b.pressed.connect(func() -> void: speed_requested.emit(sp))
 		row.add_child(b)
 		_speed_buttons.append(b)
+	var tut_btn := UiKit.button("Tutorial", Vector2(130, 60))
+	tut_btn.pressed.connect(func() -> void: tutorial_requested.emit())
+	row.add_child(tut_btn)
 	var new_btn := UiKit.button("New island", Vector2(160, 60))
 	new_btn.pressed.connect(func() -> void: new_island_requested.emit())
 	row.add_child(new_btn)
@@ -84,12 +89,81 @@ func _build_status() -> void:
 	p.offset_left = 12
 	p.offset_top = 84
 	root.add_child(p)
+	var col := VBoxContainer.new()
+	p.add_child(col)
 	status_label = UiKit.label("", 20)
-	p.add_child(status_label)
+	col.add_child(status_label)
+	objective_label = UiKit.label("", 18)
+	objective_label.add_theme_color_override("font_color", Color(1.0, 0.88, 0.55))
+	objective_label.visible = false
+	col.add_child(objective_label)
 	status_panel = p
 
 
 var status_panel: PanelContainer
+var objective_label: Label
+
+
+func set_objective(text: String) -> void:
+	objective_label.text = text
+	objective_label.visible = text != ""
+
+
+# ------------------------------------------------------------- popup (away summary, tutorial)
+var popup: PanelContainer
+var _popup_title: Label
+var _popup_body: Label
+var _popup_queue: Array[PackedStringArray] = [] # further popups shown after OK, in order
+
+
+func _build_popup() -> void:
+	popup = UiKit.panel(0.94)
+	popup.set_anchors_preset(Control.PRESET_CENTER)
+	popup.custom_minimum_size = Vector2(620, 0)
+	popup.grow_horizontal = Control.GROW_DIRECTION_BOTH
+	popup.grow_vertical = Control.GROW_DIRECTION_BOTH
+	popup.visible = false
+	root.add_child(popup)
+	var col := VBoxContainer.new()
+	col.add_theme_constant_override("separation", 12)
+	popup.add_child(col)
+	_popup_title = UiKit.label("", 26)
+	col.add_child(_popup_title)
+	_popup_body = UiKit.label("", 19)
+	_popup_body.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	_popup_body.custom_minimum_size = Vector2(580, 0)
+	col.add_child(_popup_body)
+	var ok := UiKit.button("OK", Vector2(140, 60))
+	ok.size_flags_horizontal = Control.SIZE_SHRINK_END
+	ok.pressed.connect(dismiss_popup)
+	col.add_child(ok)
+
+
+## Shows a popup; if one is already open, this one is queued and appears after OK.
+func show_popup(title: String, body: String) -> void:
+	if popup.visible:
+		_popup_queue.append(PackedStringArray([title, body]))
+		return
+	_popup_title.text = title
+	_popup_body.text = body
+	popup.visible = true
+	popup.reset_size()
+
+
+func dismiss_popup() -> void:
+	popup.visible = false
+	if not _popup_queue.is_empty():
+		var next: PackedStringArray = _popup_queue.pop_front()
+		show_popup(next[0], next[1])
+
+
+func clear_popups() -> void:
+	_popup_queue.clear()
+	popup.visible = false
+
+
+func popup_text() -> String:
+	return _popup_title.text + "\n" + _popup_body.text if popup.visible else ""
 
 
 func set_status(ws: WorldState) -> void:

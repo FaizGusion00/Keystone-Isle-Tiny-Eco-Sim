@@ -74,6 +74,7 @@ var world: WorldState
 var rng := RandomNumberGenerator.new()
 var events := EventLog.new()
 var fish_capacity := FISH_CAP  ## derived each tick (not saved)
+var scenario: Scenario = null  ## optional goal, evaluated after every tick (saved)
 
 var _water_next := PackedFloat32Array()
 var _sed_next := PackedFloat32Array()
@@ -164,6 +165,8 @@ func step() -> void:
 	_crops()
 	_wildlife()
 	_settlement()
+	if scenario != null:
+		scenario.evaluate(world)
 
 
 func run(ticks: int) -> void:
@@ -628,4 +631,6 @@ func state_checksum() -> String:
 	ctx.update(world.checksum().to_utf8_buffer())
 	ctx.update(events.checksum_bytes())
 	ctx.update(var_to_bytes([rng.seed, rng.state]))
+	if scenario != null:
+		ctx.update(var_to_bytes(scenario.to_dict()))
 	return ctx.finish().hex_encode()

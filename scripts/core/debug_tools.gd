@@ -3,6 +3,7 @@ extends RefCounted
 ## Optional command-line hooks (after `--`), used for automated screenshots:
 ##   godot -- --select=12,14 --screenshot=/tmp/shot.png [--seed=N] [--zoom=1.5]
 ##            [--clear-rect=x0,y0,x1,y1] [--ticks=N] [--speed=0|1|2]
+##            [--tutorial] [--restore] [--away=SECONDS]
 ##            [--farms=N] [--overlay=0..4] [--history[=EVENT_TYPE_NAME]]
 
 
@@ -37,6 +38,15 @@ static func handle_cmdline(main: Node) -> void:
 		main.world_view.refresh()
 		main.hud.set_day(main.sim.world.tick)
 		main.hud.set_status(main.sim.world)
+	if args.has("away"):
+		# simulate leaving the app for N seconds: suspend → (time passes) → resume → catch-up
+		main.hud.clear_popups() # the player dismissed the intro before leaving
+		main.suspend()
+		main._suspended_at -= float(args["away"])
+		main.resume()
+		if main.catch_up != null:
+			main.catch_up.run_all()
+			main._finish_catch_up(true)
 	if args.has("speed"):
 		main.set_speed(int(args["speed"]))
 	if args.has("overlay"):

@@ -4,6 +4,8 @@ extends RefCounted
 
 var failures: PackedStringArray = []
 var current := ""
+## Set by a test that deliberately triggers engine errors (the runner fails tests that log errors).
+var expects_errors := false
 
 
 func assert_true(cond: bool, msg: String = "") -> void:

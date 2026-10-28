@@ -1,6 +1,6 @@
 extends Node2D
 ## Composition root: owns the Simulation, wires input -> picking -> actions/inspector,
-## and the fixed-tick clock -> view refresh.
+## the fixed-tick clock -> view refresh, autosave and app-switch catch-up (see docs/TDD.md).
 
 const DEFAULT_SEED := 12345
 const MAP_SIZE := 32
@@ -10,9 +10,22 @@ const MAP_SIZE := 32
 @onready var hud: Hud = $HUD
 @onready var clock: SimClock = $Clock
 
+const AUTOSAVE_EVERY := 30 ## ticks
+
 var sim: Simulation
 var selected := Vector2i(-1, -1)
 var _seen_event_id := 0
+
+## Saving is on for normal launches; debug/screenshot runs (with user args) don't touch the
+## player's save unless they pass --restore.
+var persistence := true
+var save_path := SaveSystem.DEFAULT_PATH
+var catch_up: CatchUp = null
+var last_save_unix := 0.0
+var _suspended := false
+var _suspended_at := 0.0
+var _ticks_since_save := 0
+var _scenario_status := -1
 
 ## Event types worth a toast when they happen.
 const NOTABLE := [EventLog.Type.MUDDY_WATER, EventLog.Type.WATER_CLEARED, EventLog.Type.DROUGHT,
@@ -29,8 +42,15 @@ func _ready() -> void:
 	hud.overlay_requested.connect(cycle_overlay)
 	hud.events_requested.connect(func() -> void: hud.show_events(sim.events))
 	hud.why_requested.connect(func(id: int) -> void: hud.show_events(sim.events, id))
-	new_world(DEFAULT_SEED)
+	hud.tutorial_requested.connect(start_tutorial)
+	var args := OS.get_cmdline_user_args()
+	persistence = args.is_empty() or args.has("--restore")
 	set_speed(SimClock.Speed.NORMAL)
+	if not (persistence and restore_from_disk()):
+		if persistence or args.has("--tutorial"):
+			start_tutorial()
+		else:
+			new_world(DEFAULT_SEED)
 	DebugTools.handle_cmdline(self)
 
 
@@ -38,8 +58,22 @@ func new_world(world_seed: int) -> void:
 	set_simulation(Simulation.create(world_seed, MAP_SIZE))
 
 
+func start_tutorial() -> void:
+	var s := Simulation.create(Scenario.TUTORIAL_SEED, MAP_SIZE)
+	s.scenario = Scenario.tutorial()
+	set_simulation(s)
+	set_speed(SimClock.Speed.NORMAL)
+	hud.show_popup("Tutorial: " + s.scenario.title(), s.scenario.intro_text())
+	autosave()
+
+
 func set_simulation(s: Simulation) -> void:
+	hud.clear_popups()
 	sim = s
+	catch_up = null
+	clock.blocked = _suspended
+	_scenario_status = sim.scenario.status if sim.scenario != null else -1
+	hud.set_objective(sim.scenario.objective_text(sim.world) if sim.scenario != null else "")
 	_seen_event_id = sim.events.next_id
 	hud.hide_events()
 	clock.sim = sim
@@ -109,16 +143,140 @@ func _toast_new_events() -> void:
 		hud.toast(sim.events.describe(newest), 4.0)
 
 
-func _on_ticked(_count: int) -> void:
-	world_view.refresh()
+func _on_ticked(count: int) -> void:
+	_refresh_ui()
 	_toast_new_events()
+	_check_scenario()
+	_ticks_since_save += count
+	if _ticks_since_save >= AUTOSAVE_EVERY:
+		autosave()
+
+
+func _refresh_ui() -> void:
+	world_view.refresh()
 	hud.set_status(sim.world)
 	hud.set_day(sim.world.tick)
+	if sim.scenario != null:
+		hud.set_objective(sim.scenario.objective_text(sim.world))
 	if selected.x >= 0:
 		hud.show_tile(sim, selected)
+
+
+func _check_scenario() -> void:
+	if sim.scenario == null or sim.scenario.status == _scenario_status:
+		return
+	_scenario_status = sim.scenario.status
+	if _scenario_status == Scenario.Status.RUNNING:
+		return
+	set_speed(SimClock.Speed.PAUSED)
+	if _scenario_status == Scenario.Status.WON:
+		hud.show_popup("Tutorial complete!", sim.scenario.reason +
+			"\n\nYou can keep playing this island, or press New island for a free sandbox.")
+	else:
+		var body := sim.scenario.reason
+		for id in sim.events.recent(EventLog.CAPACITY):
+			var t := sim.events.type_of(id)
+			if t == EventLog.Type.POPULATION_LOSS or t == EventLog.Type.FOOD_SHORTAGE or t == EventLog.Type.WATER_SHORTAGE:
+				body += "\n\nWhat happened:\n" + "\n".join(sim.events.explain(id))
+				break
+		hud.show_popup("Tutorial failed", body + "\n\nPress Tutorial to try again.")
 
 
 func _on_new_island() -> void:
 	var rng := RandomNumberGenerator.new()
 	rng.randomize()
 	new_world(rng.randi_range(1, 2147483646))
+	autosave()
+
+
+# ------------------------------------------------------------------ persistence & lifecycle
+
+func _now() -> float:
+	return Time.get_unix_time_from_system()
+
+
+## Atomic autosave (temp file + verify + backup). Records the timestamp used for catch-up.
+func autosave() -> Error:
+	_ticks_since_save = 0
+	if not persistence or sim == null:
+		return ERR_UNAVAILABLE
+	last_save_unix = _now()
+	var err := SaveSystem.save_game(sim, save_path, {"saved_at": last_save_unix, "speed": clock.speed})
+	if err != OK:
+		push_warning("autosave failed: %s" % error_string(err))
+	return err
+
+
+## Next launch (also after the OS killed the app): load the autosave, then catch up.
+func restore_from_disk() -> bool:
+	var r := SaveSystem.load_game(save_path)
+	if r.is_empty():
+		return false
+	set_simulation(r["sim"])
+	var speed := int(r["meta"].get("speed", SimClock.Speed.NORMAL))
+	set_speed(speed)
+	if String(r["source"]).ends_with(".bak"):
+		hud.toast("Main save was damaged: restored the backup", 4.0)
+	start_catch_up(CatchUp.compute_ticks(_now() - float(r["saved_at"]), speed))
+	return true
+
+
+func _notification(what: int) -> void:
+	match what:
+		NOTIFICATION_APPLICATION_PAUSED, NOTIFICATION_APPLICATION_FOCUS_OUT, NOTIFICATION_WM_CLOSE_REQUEST:
+			suspend()
+		NOTIFICATION_APPLICATION_RESUMED, NOTIFICATION_APPLICATION_FOCUS_IN:
+			resume()
+
+
+## Leaving the app: freeze the sim and save immediately (the OS may kill us at any time).
+func suspend() -> void:
+	if _suspended or sim == null or not is_node_ready():
+		return
+	_suspended = true
+	clock.blocked = true
+	if catch_up != null:
+		catch_up.run_all()
+		_finish_catch_up(false)
+	autosave()
+	_suspended_at = _now()
+
+
+## Back in the app: catch up deterministically for the time we were away.
+func resume() -> void:
+	if not _suspended:
+		return
+	_suspended = false
+	clock.blocked = false
+	start_catch_up(CatchUp.compute_ticks(_now() - _suspended_at, clock.speed))
+
+
+func start_catch_up(ticks: int) -> void:
+	if ticks <= 0:
+		return
+	catch_up = CatchUp.new()
+	catch_up.begin(sim, ticks)
+	clock.blocked = true
+	if ticks >= CatchUp.SUMMARY_MIN_TICKS:
+		hud.toast("Catching up %d days…" % ticks, 2.0)
+
+
+func _process(_delta: float) -> void:
+	if catch_up != null and not _suspended:
+		if catch_up.process_batch():
+			_finish_catch_up(true)
+		else:
+			world_view.refresh()
+			hud.set_day(sim.world.tick)
+
+
+func _finish_catch_up(show_summary: bool) -> void:
+	var cu := catch_up
+	catch_up = null
+	clock.blocked = _suspended
+	_seen_event_id = sim.events.next_id
+	_refresh_ui()
+	if show_summary and cu.total >= CatchUp.SUMMARY_MIN_TICKS:
+		hud.show_popup("While you were away", cu.summary())
+	_check_scenario()
+	autosave()

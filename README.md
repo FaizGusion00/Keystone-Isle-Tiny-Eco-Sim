@@ -20,7 +20,12 @@ godot --path .                 # play
 godot --path . --editor        # open editor
 ```
 Controls: tap/click a tile to inspect · drag to pan · pinch / mouse wheel / `+`/`-` to zoom ·
-arrow keys to pan.
+arrow keys to pan · bottom bar: Inspect / Clear trees / Plant trees / Build farm, overlay layer,
+History (tap an event → "Why?") · top bar: Pause / 1× / 4×, Tutorial, New island.
+
+First launch starts the **"Feed the Village" tutorial**; afterwards the game autosaves (every 30
+days and whenever the app is backgrounded/closed) and resumes where you left off, catching up
+the time you were away (capped at 360 days) with a "While you were away" summary.
 
 ## Tests
 ```bash
@@ -32,7 +37,11 @@ godot --headless --path . --quit-after 300                  # smoke-run main sce
 Screenshot (needs a display or `xvfb-run`):
 ```bash
 xvfb-run -a godot --path . -- --select=14,12 --screenshot=/tmp/shot.png
+xvfb-run -a godot --path . -- --tutorial --farms=2 --ticks=40 --away=60 --screenshot=/tmp/away.png
 ```
+Debug args (after `--`): `--seed --zoom --clear-rect=x0,y0,x1,y1 --farms=N --ticks=N --speed=0|1|2
+--overlay=0..4 --history[=TYPE] --select=x,y --tutorial --restore --away=SECONDS`.
+Runs with debug args don't read/write the save unless `--restore` is given.
 
 ## Folders & naming
 ```

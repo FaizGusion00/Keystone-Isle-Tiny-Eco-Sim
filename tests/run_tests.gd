@@ -3,7 +3,32 @@ extends SceneTree
 ## Discovers tests/test_*.gd, runs every method named test_*, exits 1 on any failure.
 
 
-func _init() -> void:
+## Counts engine/script errors so a test that crashes mid-way (SCRIPT ERROR aborts the
+## method without failing an assertion) is reported as FAIL, not PASS.
+class ErrorCounter extends Logger:
+	var count := 0
+	func _log_error(_function: String, _file: String, _line: int, _code: String, _rationale: String,
+			_editor_notify: bool, error_type: int, _script_backtraces: Array[ScriptBacktrace]) -> void:
+		if error_type != ERROR_TYPE_WARNING:
+			count += 1
+	func _log_message(_message: String, _error: bool) -> void:
+		pass
+
+
+var _ran := false
+var _errors := ErrorCounter.new()
+
+
+## Tests run on the first frame, once the root window is in the tree (scene tests need it).
+func _process(_delta: float) -> bool:
+	if not _ran:
+		_ran = true
+		OS.add_logger(_errors)
+		_run_all()
+	return false
+
+
+func _run_all() -> void:
 	var filter := ""
 	for a in OS.get_cmdline_user_args():
 		if a.begins_with("--filter="):
@@ -31,7 +56,11 @@ func _init() -> void:
 				continue
 			inst.current = "%s::%s" % [f.get_basename(), mname]
 			var before := inst.failures.size()
+			var errs_before := _errors.count
 			inst.call(mname)
+			if _errors.count > errs_before and not inst.expects_errors:
+				inst.failures.append("%s: %d engine/script error(s) logged (see above)" % [inst.current, _errors.count - errs_before])
+			inst.expects_errors = false
 			if inst.failures.size() == before:
 				passed += 1
 				print("  PASS ", inst.current)

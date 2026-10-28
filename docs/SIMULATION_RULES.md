@@ -85,3 +85,10 @@ Life events (all hysteresis, so they fire once per episode):
 Without farms the village is roughly stable (≈75 % fed, no growth); farms are the route to growth. Clearing the forest
 reproduces the headline chain within ~75 days: *Trees cleared → Soil erosion → Muddy water → Fish declining → Food
 shortage → Villagers left* (see `tests/test_life.gd::test_full_chain_clearing_to_hunger`).
+
+## 7. Tutorial scenario "Feed the Village" (M5, `Scenario`)
+Fixed seed 12345. **Win:** ≥ 12 villagers with ≥ 1 farm built, before day 240.
+**Fail:** villagers drop to 6 or fewer, or day 240 passes. Evaluated after every tick (also during
+catch-up). The fail popup includes the recorded cause chain of the latest population loss /
+shortage, e.g. *Villagers left ← Food shortage ← Fish declining ← Muddy water ← Erosion ←
+Trees cleared*. Scenario state is part of the save and the checksum.
