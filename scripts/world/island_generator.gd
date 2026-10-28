@@ -59,6 +59,7 @@ static func generate(world_seed: int, w: int = 32, h: int = 32) -> WorldState:
 			ws.land_type[i] = t
 			ws.soil_moisture[i] = 1.0 if LandType.is_water(t) else clampf(0.18 + 0.45 * m, 0.0, 1.0)
 			ws.vegetation_cover[i] = _initial_vegetation(t, m)
+			ws.soil_depth[i] = _initial_soil(t)
 	return ws
 
 
@@ -69,4 +70,13 @@ static func _initial_vegetation(t: int, m: float) -> float:
 		LandType.LOWLAND: return 0.30 + 0.2 * m
 		LandType.HILLS: return 0.20 + 0.15 * m
 		LandType.BEACH: return 0.05
+	return 0.0
+
+
+static func _initial_soil(t: int) -> float:
+	match t:
+		LandType.FOREST, LandType.LOWLAND: return 1.0
+		LandType.GRASSLAND: return 0.85
+		LandType.HILLS: return 0.5
+		LandType.BEACH: return 0.25
 	return 0.0

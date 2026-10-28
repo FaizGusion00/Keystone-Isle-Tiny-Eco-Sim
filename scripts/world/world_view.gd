@@ -18,7 +18,7 @@ const BASE_COLORS := [
 
 var world: WorldState
 var tile_colors := PackedColorArray()
-var _keys := PackedInt32Array()
+var _keys := PackedInt64Array()
 var _dirty := PackedByteArray()
 var _chunks: Array[WorldChunk] = []
 var _chunks_x := 0
@@ -81,6 +81,11 @@ func refresh(force: bool = false) -> int:
 	return redrawn
 
 
+const BARE_SOIL := Color(0.58, 0.45, 0.30)
+const RIVER := Color(0.22, 0.52, 0.78)
+const MUD := Color(0.55, 0.42, 0.25)
+
+
 func color_for(i: int) -> Color:
 	var t: int = world.land_type[i]
 	var c: Color = BASE_COLORS[t]
@@ -88,8 +93,19 @@ func color_for(i: int) -> Color:
 	var e := snappedf(world.elevation[i], 1.0 / 16.0)
 	if LandType.is_water(t):
 		c = c.lightened(clampf(e * 0.9, 0.0, 0.4))
-	else:
-		c = c.darkened(0.25 - e * 0.35) if e < 0.7 else c.lightened((e - 0.7) * 0.9)
+		var mud := snappedf(clampf(world.sediment[i] * 12.0, 0.0, 0.85), 0.125)
+		if mud > 0.0:
+			c = c.lerp(MUD, mud)
+		return c
+	if t != LandType.BEACH:
+		var bare := snappedf(clampf((0.35 - world.vegetation_cover[i]) / 0.35, 0.0, 1.0), 0.125)
+		if bare > 0.0:
+			c = c.lerp(BARE_SOIL, bare * 0.8)
+	c = c.darkened(0.25 - e * 0.35) if e < 0.7 else c.lightened((e - 0.7) * 0.9)
+	var wet := snappedf(clampf((world.flow[i] - 0.07) / 0.2, 0.0, 0.85), 0.1)
+	if wet >= 0.1:
+		var river := RIVER.lerp(MUD, snappedf(clampf(world.sediment[i] * 6.0, 0.0, 0.7), 0.1))
+		c = c.lerp(river, wet)
 	return c
 
 

@@ -11,6 +11,19 @@ var elevation := PackedFloat32Array()        ## 0..1
 var land_type := PackedByteArray()           ## LandType id
 var soil_moisture := PackedFloat32Array()    ## 0..1
 var vegetation_cover := PackedFloat32Array() ## 0..1
+# --- Milestone 2: water & soil ---
+var surface_water := PackedFloat32Array()    ## water depth on the surface (sea tiles: inflow sink)
+var sediment := PackedFloat32Array()         ## suspended sediment carried by water / turbidity at sea
+var soil_depth := PackedFloat32Array()       ## 0..1 fertile topsoil
+var flow := PackedFloat32Array()             ## smoothed outflow (rivers/streams)
+var erosion_accum := PackedFloat32Array()    ## soil lost since last erosion event (M3)
+
+# --- Global (non-tile) state ---
+var tick: int = 0
+var rain_today: float = 0.0
+var dry_streak: int = 0
+var sediment_to_sea: float = 0.0   ## sediment entering the sea during the last tick
+var coastal_turbidity: float = 0.0 ## mean sediment over shallow-water tiles
 
 
 func _init(w: int = 32, h: int = 32, s: int = 0) -> void:
@@ -22,6 +35,11 @@ func _init(w: int = 32, h: int = 32, s: int = 0) -> void:
 	land_type.resize(n)
 	soil_moisture.resize(n)
 	vegetation_cover.resize(n)
+	surface_water.resize(n)
+	sediment.resize(n)
+	soil_depth.resize(n)
+	flow.resize(n)
+	erosion_accum.resize(n)
 
 
 func tile_count() -> int:
@@ -50,4 +68,11 @@ func checksum() -> String:
 	ctx.update(land_type)
 	ctx.update(soil_moisture.to_byte_array())
 	ctx.update(vegetation_cover.to_byte_array())
+	ctx.update(surface_water.to_byte_array())
+	ctx.update(sediment.to_byte_array())
+	ctx.update(soil_depth.to_byte_array())
+	ctx.update(flow.to_byte_array())
+	ctx.update(erosion_accum.to_byte_array())
+	ctx.update(var_to_bytes([tick, rain_today, dry_streak, sediment_to_sea, coastal_turbidity]))
 	return ctx.finish().hex_encode()
+

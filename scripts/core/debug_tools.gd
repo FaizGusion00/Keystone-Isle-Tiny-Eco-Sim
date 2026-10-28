@@ -2,6 +2,7 @@ class_name DebugTools
 extends RefCounted
 ## Optional command-line hooks (after `--`), used for automated screenshots:
 ##   godot -- --select=12,14 --screenshot=/tmp/shot.png [--seed=N] [--zoom=1.5]
+##            [--clear-rect=x0,y0,x1,y1] [--ticks=N] [--speed=0|1|2]
 
 
 static func handle_cmdline(main: Node) -> void:
@@ -16,6 +17,17 @@ static func handle_cmdline(main: Node) -> void:
 	if args.has("zoom"):
 		var z := float(args["zoom"])
 		main.camera.zoom = Vector2(z, z)
+	if args.has("clear-rect"):
+		var r: PackedStringArray = String(args["clear-rect"]).split(",")
+		for y in range(int(r[1]), int(r[3]) + 1):
+			for x in range(int(r[0]), int(r[2]) + 1):
+				main.sim.apply_action(Simulation.Action.CLEAR_TREES, x, y)
+	if args.has("ticks"):
+		main.sim.run(int(args["ticks"]))
+		main.world_view.refresh()
+		main.hud.set_day(main.sim.world.tick)
+	if args.has("speed"):
+		main.set_speed(int(args["speed"]))
 	if args.has("select"):
 		var p: PackedStringArray = String(args["select"]).split(",")
 		main.select_tile(Vector2i(int(p[0]), int(p[1])))
