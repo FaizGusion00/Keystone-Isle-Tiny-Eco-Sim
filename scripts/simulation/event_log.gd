@@ -43,6 +43,7 @@ const ROOT_KIND := {
 	Type.HEAVY_RAIN: "weather",
 	Type.DROUGHT: "weather",
 	Type.DROUGHT_ENDED: "weather",
+	Type.POPULATION_GROWTH: "plenty of food and water",
 }
 
 const CAPACITY := 512

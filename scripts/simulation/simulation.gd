@@ -7,7 +7,7 @@ extends RefCounted
 ## - Water and sediment use two buffers (read current, write next, swap).
 ## - Tick loops iterate local aliases of Packed arrays and allocate nothing.
 
-enum Action { NONE, CLEAR_TREES, PLANT_TREES }
+enum Action { NONE, CLEAR_TREES, PLANT_TREES, BUILD_FARM }
 
 const YEAR_LENGTH := 120.0
 # Rainfall
@@ -39,10 +39,41 @@ const MUDDY_ENTER := 0.045       ## coastal turbidity hysteresis
 const MUDDY_EXIT := 0.030
 const CAUSE_WINDOW := 40         ## days an event stays eligible as a cause
 const RAIN_CAUSE_WINDOW := 3
+# Life & settlement (M4)
+const FISH_CAP := 100.0
+const FISH_GROWTH := 0.04
+const FISH_TURB_START := 0.015   ## turbidity above which fish habitat shrinks
+const FISH_TURB_RANGE := 0.06
+const FISH_LOW := 45.0           ## FISH_DECLINE hysteresis
+const FISH_OK := 65.0
+const GOAT_GROWTH := 0.03
+const GOAT_PER_VEG := 0.15       ## carrying capacity per unit of pasture vegetation
+const GRAZE := 0.004             ## vegetation eaten per goat per day
+const GOATS_LOW := 12.0
+const GOATS_OK := 18.0
+const CROP_DAYS := 30.0
+const CROP_DRY := 0.10           ## soil moisture below which crops stall and stress
+const CROP_FAIL_DAYS := 10
+const HARVEST_FOOD := 8.0
+const HARVEST_SOIL_COST := 0.02
+const FARM_RADIUS := 5           ## farms must be this close (Chebyshev) to the village
+const FOOD_PER_VILLAGER := 0.10
+const WATER_PER_VILLAGER := 0.05
+const FISH_CATCH_RATE := 0.02
+const FISH_CATCH_PER_VILLAGER := 0.06
+const HUNT_RATE := 0.01
+const HUNT_PER_VILLAGER := 0.03
+const FOOD_STORE_MAX := 150.0
+const WATER_RADIUS := 3
+const SHORTAGE_ENTER := 0.70
+const SHORTAGE_EXIT := 0.90
+const POP_PERIOD := 30
+const LIFE_CAUSE_WINDOW := 60
 
 var world: WorldState
 var rng := RandomNumberGenerator.new()
 var events := EventLog.new()
+var fish_capacity := FISH_CAP  ## derived each tick (not saved)
 
 var _water_next := PackedFloat32Array()
 var _sed_next := PackedFloat32Array()
@@ -130,6 +161,9 @@ func step() -> void:
 	_soil_water()
 	_vegetation()
 	_detect_events()
+	_crops()
+	_wildlife()
+	_settlement()
 
 
 func run(ticks: int) -> void:
@@ -364,6 +398,171 @@ func _muddiest_shallow() -> int:
 	return best
 
 
+# ---------------------------------------------------------------- life (M4)
+
+@warning_ignore("integer_division")
+func _crops() -> void:
+	var st := world.structure
+	var crop := world.crop_growth
+	var stress := world.crop_stress
+	var moist := world.soil_moisture
+	var soil := world.soil_depth
+	var veg := world.vegetation_cover
+	var w := world.width
+	for i in st.size():
+		if st[i] != WorldState.Structure.FARM:
+			continue
+		var m := moist[i]
+		var sf := clampf(soil[i] / 0.5, 0.2, 1.0)
+		if m < CROP_DRY:
+			stress[i] = mini(stress[i] + 1, 255)
+			if stress[i] == CROP_FAIL_DAYS and crop[i] > 0.0:
+				crop[i] = 0.0
+				var dr := world.drought_event if world.drought_event >= 0 else -1
+				var id := events.record(world.tick, EventLog.Type.CROP_FAILURE, i % w, i / w, 0.0, dr)
+				world.crop_failure_event = id
+				world.last_event[i] = id
+		else:
+			stress[i] = 0
+		var c := crop[i] + (1.0 / CROP_DAYS) * clampf((m - CROP_DRY) / 0.25, 0.0, 1.0) * sf
+		if c >= 1.0:
+			world.food_store = minf(world.food_store + HARVEST_FOOD * sf, FOOD_STORE_MAX)
+			soil[i] = maxf(soil[i] - HARVEST_SOIL_COST, 0.0)
+			world.harvests += 1
+			c = 0.0
+		crop[i] = c
+		veg[i] = 0.12 + 0.5 * c # crops give little ground cover: farms can erode
+
+
+func _wildlife() -> void:
+	# Fish: logistic growth; muddy water shrinks the habitat (carrying capacity).
+	var cap := FISH_CAP * (1.0 - clampf((world.coastal_turbidity - FISH_TURB_START) / FISH_TURB_RANGE, 0.0, 0.85))
+	var f := world.fish
+	world.fish = maxf(f + FISH_GROWTH * f * (1.0 - f / cap), 0.0)
+	# Goats graze open pasture (lowland, grassland, hills without structures).
+	var veg := world.vegetation_cover
+	var lt := world.land_type
+	var st := world.structure
+	var pasture := 0.0
+	for i in veg.size():
+		var t := lt[i]
+		if st[i] == 0 and (t == LandType.LOWLAND or t == LandType.GRASSLAND or t == LandType.HILLS):
+			pasture += veg[i]
+	var g := world.goats
+	var gcap := maxf(pasture * GOAT_PER_VEG, 0.001)
+	world.goats = maxf(g + GOAT_GROWTH * g * (1.0 - g / gcap), 0.0)
+	if pasture > 0.0 and g > 0.0:
+		var eaten := minf(g * GRAZE / pasture, 0.5)
+		for i in veg.size():
+			var t := lt[i]
+			if st[i] == 0 and (t == LandType.LOWLAND or t == LandType.GRASSLAND or t == LandType.HILLS):
+				veg[i] *= 1.0 - eaten
+	fish_capacity = cap
+
+
+@warning_ignore("integer_division")
+func _settlement() -> void:
+	var si := world.settlement_index
+	if si < 0 or world.villagers <= 0:
+		return
+	var tick := world.tick
+	var v := float(world.villagers)
+	# Gather food: fishing and hunting, then eat from the store.
+	var catch := minf(world.fish * FISH_CATCH_RATE, v * FISH_CATCH_PER_VILLAGER)
+	world.fish -= catch
+	var hunt := minf(world.goats * HUNT_RATE, v * HUNT_PER_VILLAGER)
+	world.goats -= hunt
+	world.food_store = minf(world.food_store + catch + hunt, FOOD_STORE_MAX)
+	var need := v * FOOD_PER_VILLAGER
+	var eat := minf(world.food_store, need)
+	world.food_store -= eat
+	world.food_ema = world.food_ema * 0.9 + (eat / need) * 0.1
+	# Fresh water from streams, ponds and wet soil around the village.
+	var w := world.width
+	var sx := si % w
+	var sy := si / w
+	var flow := world.flow
+	var water := world.surface_water
+	var moist := world.soil_moisture
+	var lt := world.land_type
+	var supply := 0.0
+	for y in range(maxi(sy - WATER_RADIUS, 0), mini(sy + WATER_RADIUS + 1, world.height)):
+		for x in range(maxi(sx - WATER_RADIUS, 0), mini(sx + WATER_RADIUS + 1, w)):
+			var i := y * w + x
+			if lt[i] > LandType.SHALLOW_WATER:
+				supply += flow[i] + water[i] * 0.5 + maxf(moist[i] - 0.2, 0.0) * 0.02
+	world.water_supply = supply
+	var wneed := v * WATER_PER_VILLAGER
+	world.water_ema = world.water_ema * 0.9 + minf(supply / wneed, 1.0) * 0.1
+	_life_events(tick)
+	if tick % POP_PERIOD == 0:
+		_population(tick)
+
+
+func _recent(id: int, tick: int, window: int) -> int:
+	return id if events.has(id) and tick - events.tick_of(id) <= window else -1
+
+
+func _life_events(tick: int) -> void:
+	var si := world.settlement_index
+	var c := world.coords(si)
+	# Fish decline: cite muddy water only if it is actually shrinking the habitat now,
+	# and recent village growth (more mouths fishing).
+	if world.fish_event < 0 and world.fish < FISH_LOW:
+		var mud := world.muddy_event if world.coast_muddy and world.coastal_turbidity > FISH_TURB_START else -1
+		var grow := _recent(world.growth_event, tick, LIFE_CAUSE_WINDOW)
+		var at := events.pos_of(world.muddy_event) if mud >= 0 else c
+		world.fish_event = events.record(tick, EventLog.Type.FISH_DECLINE, at.x, at.y, world.fish, mud, grow)
+	elif world.fish_event >= 0 and world.fish > FISH_OK:
+		world.fish_event = -1
+	if world.goats_event < 0 and world.goats < GOATS_LOW:
+		world.goats_event = events.record(tick, EventLog.Type.HERBIVORE_DECLINE, -1, -1, world.goats,
+				world.drought_event, _recent(world.growth_event, tick, LIFE_CAUSE_WINDOW))
+	elif world.goats_event >= 0 and world.goats > GOATS_OK:
+		world.goats_event = -1
+	# Food shortage: cite the food sources that are actually failing.
+	if world.food_event < 0 and world.food_ema < SHORTAGE_ENTER:
+		var cands := [world.fish_event, _recent(world.crop_failure_event, tick, LIFE_CAUSE_WINDOW),
+				world.goats_event, _recent(world.growth_event, tick, LIFE_CAUSE_WINDOW)]
+		var cs := PackedInt32Array([-1, -1, -1])
+		var k := 0
+		for id in cands:
+			if id >= 0 and k < 3:
+				cs[k] = id
+				k += 1
+		world.food_event = events.record(tick, EventLog.Type.FOOD_SHORTAGE, c.x, c.y, world.food_ema, cs[0], cs[1], cs[2])
+		world.last_event[si] = world.food_event
+	elif world.food_event >= 0 and world.food_ema > SHORTAGE_EXIT:
+		world.food_event = -1
+	if world.water_event < 0 and world.water_ema < SHORTAGE_ENTER:
+		world.water_event = events.record(tick, EventLog.Type.WATER_SHORTAGE, c.x, c.y, world.water_ema, world.drought_event)
+		world.last_event[si] = world.water_event
+	elif world.water_event >= 0 and world.water_ema > SHORTAGE_EXIT:
+		world.water_event = -1
+
+
+func _population(tick: int) -> void:
+	var si := world.settlement_index
+	var c := world.coords(si)
+	if world.food_ema < 0.6 or world.water_ema < 0.6:
+		world.villagers -= 1
+		var id := events.record(tick, EventLog.Type.POPULATION_LOSS, c.x, c.y, world.villagers,
+				world.food_event if world.food_ema < 0.6 else -1, world.water_event if world.water_ema < 0.6 else -1)
+		world.last_event[si] = id
+	elif world.food_ema > 0.95 and world.water_ema > 0.95 and world.food_store >= world.villagers * 3.0:
+		world.villagers += 1
+		world.growth_event = events.record(tick, EventLog.Type.POPULATION_GROWTH, c.x, c.y, world.villagers)
+		world.last_event[si] = world.growth_event
+
+
+## Chebyshev distance from tile i to the settlement (large if none).
+func distance_to_settlement(x: int, y: int) -> int:
+	if world.settlement_index < 0:
+		return 1 << 30
+	var c := world.coords(world.settlement_index)
+	return maxi(absi(c.x - x), absi(c.y - y))
+
+
 # ---------------------------------------------------------------- actions
 
 ## Validates without mutating. Returns "" if allowed, else a short reason.
@@ -372,13 +571,26 @@ func can_apply(action: int, x: int, y: int) -> String:
 		return "Outside the island"
 	var i := world.index(x, y)
 	var t := world.land_type[i]
+	var st := world.structure[i]
 	match action:
 		Action.CLEAR_TREES:
 			return "" if t == LandType.FOREST else "No trees here"
 		Action.PLANT_TREES:
+			if st != WorldState.Structure.NONE:
+				return "Something is built here"
 			if t in [LandType.LOWLAND, LandType.GRASSLAND, LandType.HILLS]:
 				return ""
 			return "Trees can't grow here"
+		Action.BUILD_FARM:
+			if st != WorldState.Structure.NONE:
+				return "Something is built here"
+			if t == LandType.FOREST:
+				return "Clear the trees first"
+			if t != LandType.LOWLAND and t != LandType.GRASSLAND:
+				return "Farms need lowland or grassland"
+			if distance_to_settlement(x, y) > FARM_RADIUS:
+				return "Too far from the village"
+			return ""
 	return "Unknown action"
 
 
@@ -397,6 +609,13 @@ func apply_action(action: int, x: int, y: int) -> bool:
 			world.land_type[i] = LandType.FOREST
 			world.vegetation_cover[i] = maxf(world.vegetation_cover[i], 0.25)
 			ev = events.record(world.tick, EventLog.Type.TREES_PLANTED, x, y, 0.0)
+		Action.BUILD_FARM:
+			world.structure[i] = WorldState.Structure.FARM
+			world.crop_growth[i] = 0.0
+			world.crop_stress[i] = 0
+			world.vegetation_cover[i] = 0.12
+			world.farms_built += 1
+			ev = events.record(world.tick, EventLog.Type.FARM_BUILT, x, y, 0.0)
 	world.land_cause[i] = ev
 	world.last_event[i] = ev
 	return true

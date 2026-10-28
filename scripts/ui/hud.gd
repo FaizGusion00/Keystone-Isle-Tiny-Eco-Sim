@@ -10,8 +10,8 @@ signal overlay_requested
 signal events_requested
 signal why_requested(event_id: int)
 
-enum Tool { INSPECT, CLEAR_TREES, PLANT_TREES }
-const TOOL_LABELS := ["Inspect", "Clear trees", "Plant trees"]
+enum Tool { INSPECT, CLEAR_TREES, PLANT_TREES, BUILD_FARM }
+const TOOL_LABELS := ["Inspect", "Clear trees", "Plant trees", "Build farm"]
 
 var root: Control
 var _seed_label: Label
@@ -33,6 +33,7 @@ func _ready() -> void:
 	root.theme = UiKit.make_theme()
 	add_child(root)
 	_build_top_bar()
+	_build_status()
 	_build_inspector()
 	_build_tool_bar()
 	_build_events_panel()
@@ -73,6 +74,29 @@ func _build_top_bar() -> void:
 
 
 var top_bar_row: HBoxContainer
+
+
+var status_label: Label
+
+
+func _build_status() -> void:
+	var p := UiKit.panel(0.7)
+	p.offset_left = 12
+	p.offset_top = 84
+	root.add_child(p)
+	status_label = UiKit.label("", 20)
+	p.add_child(status_label)
+	status_panel = p
+
+
+var status_panel: PanelContainer
+
+
+func set_status(ws: WorldState) -> void:
+	status_label.text = "Villagers %d   Food %d   Fish %d   Goats %d   Water %d%%" % [
+		ws.villagers, roundi(ws.food_store), roundi(ws.fish), roundi(ws.goats), roundi(ws.water_ema * 100.0)]
+	var warn := ws.food_event >= 0 or ws.water_event >= 0
+	status_label.add_theme_color_override("font_color", Color(1.0, 0.6, 0.5) if warn else Color(1, 1, 1))
 
 
 func _build_inspector() -> void:
@@ -171,7 +195,7 @@ const MINOR_TYPES := [EventLog.Type.EROSION]
 func _build_events_panel() -> void:
 	events_panel = UiKit.panel(0.92)
 	events_panel.offset_left = 12
-	events_panel.offset_top = 96
+	events_panel.offset_top = 140
 	events_panel.anchor_bottom = 1.0
 	events_panel.offset_bottom = -104
 	events_panel.custom_minimum_size = Vector2(560, 0)
@@ -313,10 +337,19 @@ func show_tile(sim: Simulation, t: Vector2i) -> void:
 		_insp_event.text = "Last: " + sim.events.describe(_insp_event_id)
 
 
-## Inspector text; later milestones extend this.
+## Inspector text.
 func tile_text(sim: Simulation, t: Vector2i) -> String:
 	var ws := sim.world
 	var i := ws.index(t.x, t.y)
+	match ws.structure[i]:
+		WorldState.Structure.SETTLEMENT:
+			return "Village\nVillagers: %d\nFood stored: %d\nFed: %d%%   Water: %d%%\nFish: %d   Goats: %d\nFarms: %d   Harvests: %d" % [
+				ws.villagers, roundi(ws.food_store), roundi(ws.food_ema * 100.0), roundi(ws.water_ema * 100.0),
+				roundi(ws.fish), roundi(ws.goats), ws.count_structures(WorldState.Structure.FARM), ws.harvests]
+		WorldState.Structure.FARM:
+			return "Farm\nCrop growth: %d%%\nSoil moisture: %d%%\nSoil depth: %d%%%s" % [
+				roundi(ws.crop_growth[i] * 100.0), roundi(ws.soil_moisture[i] * 100.0), roundi(ws.soil_depth[i] * 100.0),
+				"\nToo dry for %d days!" % ws.crop_stress[i] if ws.crop_stress[i] > 0 else ""]
 	return "Land: %s\nElevation: %.2f\nSoil moisture: %d%%\nVegetation: %d%%\nSoil depth: %d%%\nSurface water: %.3f\nSediment: %.3f" % [
 		LandType.name_of(ws.land_type[i]), ws.elevation[i],
 		roundi(ws.soil_moisture[i] * 100.0), roundi(ws.vegetation_cover[i] * 100.0),

@@ -3,7 +3,7 @@ extends RefCounted
 ## Optional command-line hooks (after `--`), used for automated screenshots:
 ##   godot -- --select=12,14 --screenshot=/tmp/shot.png [--seed=N] [--zoom=1.5]
 ##            [--clear-rect=x0,y0,x1,y1] [--ticks=N] [--speed=0|1|2]
-##            [--overlay=0..4] [--history[=EVENT_TYPE_NAME]]
+##            [--farms=N] [--overlay=0..4] [--history[=EVENT_TYPE_NAME]]
 
 
 static func handle_cmdline(main: Node) -> void:
@@ -23,10 +23,20 @@ static func handle_cmdline(main: Node) -> void:
 		for y in range(int(r[1]), int(r[3]) + 1):
 			for x in range(int(r[0]), int(r[2]) + 1):
 				main.sim.apply_action(Simulation.Action.CLEAR_TREES, x, y)
+	if args.has("farms"):
+		# --farms=N : build up to N farms next to the village (for screenshots/tests)
+		var c: Vector2i = main.sim.world.coords(main.sim.world.settlement_index)
+		var left := int(args["farms"])
+		for r in range(1, Simulation.FARM_RADIUS + 1):
+			for dy in range(-r, r + 1):
+				for dx in range(-r, r + 1):
+					if left > 0 and main.sim.apply_action(Simulation.Action.BUILD_FARM, c.x + dx, c.y + dy):
+						left -= 1
 	if args.has("ticks"):
 		main.sim.run(int(args["ticks"]))
 		main.world_view.refresh()
 		main.hud.set_day(main.sim.world.tick)
+		main.hud.set_status(main.sim.world)
 	if args.has("speed"):
 		main.set_speed(int(args["speed"]))
 	if args.has("overlay"):

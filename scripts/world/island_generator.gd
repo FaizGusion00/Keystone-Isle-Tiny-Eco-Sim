@@ -60,7 +60,59 @@ static func generate(world_seed: int, w: int = 32, h: int = 32) -> WorldState:
 			ws.soil_moisture[i] = 1.0 if LandType.is_water(t) else clampf(0.18 + 0.45 * m, 0.0, 1.0)
 			ws.vegetation_cover[i] = _initial_vegetation(t, m)
 			ws.soil_depth[i] = _initial_soil(t)
+	_place_settlement(ws)
 	return ws
+
+
+const START_VILLAGERS := 10
+const START_FOOD := 20.0
+const START_FISH := 80.0
+const START_GOATS := 25.0
+
+
+## Puts the village on the open lowland/grassland tile closest to the sea that has the most
+## farmable land around it (deterministic: ties broken by lowest index).
+static func _place_settlement(ws: WorldState) -> void:
+	var w := ws.width
+	var h := ws.height
+	var best := -1
+	var best_score := -1.0
+	for y in h:
+		for x in w:
+			var i := y * w + x
+			var t := ws.land_type[i]
+			if t != LandType.LOWLAND and t != LandType.GRASSLAND:
+				continue
+			var near_sea := false
+			var farmable := 0
+			for dy in range(-3, 4):
+				for dx in range(-3, 4):
+					var xx := x + dx
+					var yy := y + dy
+					if not ws.in_bounds(xx, yy):
+						continue
+					var tt := ws.land_type[yy * w + xx]
+					if absi(dx) <= 2 and absi(dy) <= 2 and LandType.is_water(tt):
+						near_sea = true
+					if tt == LandType.LOWLAND or tt == LandType.GRASSLAND or tt == LandType.FOREST:
+						farmable += 1
+			var score := farmable + (100.0 if near_sea else 0.0)
+			if score > best_score:
+				best_score = score
+				best = i
+	if best < 0:
+		for i in ws.tile_count():
+			if not LandType.is_water(ws.land_type[i]):
+				best = i
+				break
+	ws.settlement_index = best
+	if best >= 0:
+		ws.structure[best] = WorldState.Structure.SETTLEMENT
+		ws.vegetation_cover[best] = 0.2
+	ws.villagers = START_VILLAGERS
+	ws.food_store = START_FOOD
+	ws.fish = START_FISH
+	ws.goats = START_GOATS
 
 
 static func _initial_vegetation(t: int, m: float) -> float:

@@ -88,6 +88,9 @@ func refresh(force: bool = false) -> int:
 const BARE_SOIL := Color(0.58, 0.45, 0.30)
 const RIVER := Color(0.22, 0.52, 0.78)
 const MUD := Color(0.55, 0.42, 0.25)
+const FIELD := Color(0.55, 0.40, 0.22)
+const CROP := Color(0.86, 0.76, 0.30)
+const VILLAGE_GROUND := Color(0.72, 0.64, 0.50)
 
 
 func set_overlay(o: int) -> void:
@@ -139,6 +142,13 @@ func color_for(i: int) -> Color:
 		if mud > 0.0:
 			c = c.lerp(MUD, mud)
 		return c
+	var st: int = world.structure[i]
+	if st == WorldState.Structure.FARM:
+		var crop := snappedf(world.crop_growth[i], 0.2)
+		c = FIELD.lerp(CROP, crop)
+		return c.darkened(0.2 - e * 0.3) if e < 0.7 else c
+	if st == WorldState.Structure.SETTLEMENT:
+		return VILLAGE_GROUND
 	if t != LandType.BEACH:
 		var bare := snappedf(clampf((0.35 - world.vegetation_cover[i]) / 0.35, 0.0, 1.0), 0.125)
 		if bare > 0.0:
@@ -151,10 +161,29 @@ func color_for(i: int) -> Color:
 	return c
 
 
-## Small placeholder decorations drawn on top of a tile (trees on forest tiles).
+## Small placeholder decorations drawn on top of a tile (trees, houses, furrows).
 func draw_tile_decor(canvas: CanvasItem, x: int, y: int, i: int) -> void:
+	var st: int = world.structure[i]
+	if st == WorldState.Structure.SETTLEMENT:
+		var c0 := Iso.tile_to_local(x, y)
+		for off in [Vector2(-14, 2), Vector2(10, -2), Vector2(-1, 8)]:
+			_draw_house(canvas, c0 + off)
+		return
+	if st == WorldState.Structure.FARM:
+		var c1 := Iso.tile_to_local(x, y)
+		var furrow := Color(0.35, 0.26, 0.14, 0.7)
+		for k in [-1, 0, 1]:
+			var o := Vector2(k * 10, k * 5)
+			canvas.draw_line(c1 + o + Vector2(-12, -6), c1 + o + Vector2(12, 6), furrow, 2.0)
+		return
 	if world.land_type[i] == LandType.FOREST:
 		var c := Iso.tile_to_local(x, y)
 		var tree := Color(0.08, 0.28, 0.12)
 		canvas.draw_colored_polygon(PackedVector2Array([
 			c + Vector2(-8, 4), c + Vector2(0, -12), c + Vector2(8, 4)]), tree)
+
+
+func _draw_house(canvas: CanvasItem, p: Vector2) -> void:
+	canvas.draw_rect(Rect2(p + Vector2(-6, -6), Vector2(12, 8)), Color(0.93, 0.89, 0.80))
+	canvas.draw_colored_polygon(PackedVector2Array([p + Vector2(-8, -6), p + Vector2(0, -13), p + Vector2(8, -6)]),
+			Color(0.70, 0.28, 0.20))

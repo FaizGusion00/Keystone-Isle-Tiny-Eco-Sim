@@ -56,3 +56,32 @@ action that last changed the tile's land.
 
 ## Overlays
 Normal, Moisture, Plants (vegetation), Soil (depth), Water & mud (flow + sediment).
+
+## 6. Life & settlement (M4)
+
+Tick order (after vegetation and event detection): **crops → wildlife → settlement**.
+
+| System | Rule |
+|---|---|
+| Village | Placed at generation on the lowland/grassland tile with the most farmable land within 3 tiles (+bonus if water within 2). Starts with 10 villagers, 20 food, 80 fish, 25 goats. |
+| Farm (`BUILD_FARM`) | Lowland/grassland, no structure, within 5 tiles (Chebyshev) of the village; forest must be cleared first. Records `FARM_BUILT`. |
+| Crops | +1/30 per day × moisture factor `clamp((m-0.10)/0.25)` × soil factor `clamp(depth/0.5, 0.2, 1)`. At 100 %: harvest `8 × soil factor` food, topsoil −0.02. Farm cover = 0.12 + 0.5·crop (fields erode). |
+| Crop failure | Moisture < 0.10 for 10 consecutive days kills a growing crop → `CROP_FAILURE`, caused by the active `DROUGHT` (if any; otherwise no cause). |
+| Fish | Logistic, r = 0.04, capacity `100 × (1 − clamp((turbidity − 0.015)/0.06, 0, 0.85))`. Muddy water shrinks the habitat. |
+| Goats | Logistic, r = 0.03, capacity 0.15 × total pasture vegetation (lowland/grassland/hills); grazing removes `goats × 0.004` cover spread over pasture. |
+| Village food | Catch `min(fish·0.02, villagers·0.06)` + hunt `min(goats·0.01, villagers·0.03)` → store (max 150). Need 0.1/villager/day; `food_ema` = EMA of fraction met. |
+| Village water | Supply = Σ within 3 tiles of (flow + 0.5·surface water + 0.02·max(moisture−0.2, 0)); need 0.05/villager; `water_ema` = EMA of min(supply/need, 1). |
+| Population | Every 30 days: −1 if either EMA < 0.6 (`POPULATION_LOSS`, caused by the active shortages); +1 if both > 0.95 and store ≥ 3 days per villager (`POPULATION_GROWTH`, root cause "plenty of food and water"). |
+
+Life events (all hysteresis, so they fire once per episode):
+
+| Event | Enter / exit | Recorded causes |
+|---|---|---|
+| `FISH_DECLINE` | fish < 45 / > 65 | active `MUDDY_WATER` (only while the coast is muddy), `POPULATION_GROWTH` within 60 days |
+| `HERBIVORE_DECLINE` | goats < 12 / > 18 | active `DROUGHT`, `POPULATION_GROWTH` within 60 days |
+| `FOOD_SHORTAGE` | food_ema < 0.7 / > 0.9 | active fish decline, crop failure within 60 days, active goat decline, growth within 60 days (first 3) |
+| `WATER_SHORTAGE` | water_ema < 0.7 / > 0.9 | active `DROUGHT` |
+
+Without farms the village is roughly stable (≈75 % fed, no growth); farms are the route to growth. Clearing the forest
+reproduces the headline chain within ~75 days: *Trees cleared → Soil erosion → Muddy water → Fish declining → Food
+shortage → Villagers left* (see `tests/test_life.gd::test_full_chain_clearing_to_hunger`).

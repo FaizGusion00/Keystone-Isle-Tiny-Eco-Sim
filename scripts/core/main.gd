@@ -47,6 +47,7 @@ func set_simulation(s: Simulation) -> void:
 	camera.set_bounds(Iso.map_bounds(sim.world.width, sim.world.height))
 	hud.set_seed(sim.world.world_seed)
 	hud.set_day(sim.world.tick)
+	hud.set_status(sim.world)
 	select_tile(Vector2i(-1, -1))
 
 
@@ -88,6 +89,7 @@ func _action_for_tool(t: int) -> int:
 	match t:
 		Hud.Tool.CLEAR_TREES: return Simulation.Action.CLEAR_TREES
 		Hud.Tool.PLANT_TREES: return Simulation.Action.PLANT_TREES
+		Hud.Tool.BUILD_FARM: return Simulation.Action.BUILD_FARM
 	return Simulation.Action.NONE
 
 
@@ -110,6 +112,7 @@ func _toast_new_events() -> void:
 func _on_ticked(_count: int) -> void:
 	world_view.refresh()
 	_toast_new_events()
+	hud.set_status(sim.world)
 	hud.set_day(sim.world.tick)
 	if selected.x >= 0:
 		hud.show_tile(sim, selected)
