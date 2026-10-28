@@ -35,3 +35,24 @@ All constants live at the top of `scripts/simulation/simulation.gd`.
 ## Player actions (between ticks)
 - **Clear trees** (forest only): tile becomes lowland/grassland (by elevation), vegetation 0.06.
 - **Plant trees** (lowland, grassland, hills): tile becomes forest, vegetation ≥ 0.25.
+
+## 5. Events & causes (`_detect_events`, M3)
+Events live in `EventLog` (ring buffer, 512 entries, parallel Packed arrays — no allocation
+while recording). Each event stores up to 3 **cause ids**: the events the rule actually read
+when it fired. Explanations (`EventLog.explain`) only walk these links; an event with no
+recorded cause says **"No recorded cause."** and roots say *your action* / *weather*.
+
+| Event | Fires when | Recorded causes |
+|---|---|---|
+| Trees cleared / planted | player action | — (root: your action) |
+| Heavy rain | daily rain ≥ 0.055 | — (root: weather) |
+| Drought / drought ended | 12 dry days in a row / first rain after | — (root: weather) |
+| Soil erosion (tile) | decaying soil-loss sum (`×0.97`/day) ≥ 0.08 | the tile's `land_cause` if it is a *Trees cleared* event; heavy rain within 3 days |
+| Coastal water turned muddy | coastal turbidity ≥ 0.045 (and not already muddy) | up to 3 latest erosion events (≤ 40 days old) that themselves have causes; else the latest erosion events |
+| Coastal water cleared | turbidity < 0.030 while muddy (hysteresis) | the muddy event |
+
+Per-tile `last_event` feeds the inspector's **Why?** button; `land_cause` remembers the
+action that last changed the tile's land.
+
+## Overlays
+Normal, Moisture, Plants (vegetation), Soil (depth), Water & mud (flow + sediment).

@@ -16,7 +16,11 @@ const BASE_COLORS := [
 	Color(0.55, 0.50, 0.40), # hills
 ]
 
+enum Overlay { NONE, MOISTURE, VEGETATION, SOIL, WATER }
+const OVERLAY_NAMES := ["Normal", "Moisture", "Plants", "Soil", "Water & mud"]
+
 var world: WorldState
+var overlay: int = Overlay.NONE
 var tile_colors := PackedColorArray()
 var _keys := PackedInt64Array()
 var _dirty := PackedByteArray()
@@ -86,7 +90,45 @@ const RIVER := Color(0.22, 0.52, 0.78)
 const MUD := Color(0.55, 0.42, 0.25)
 
 
+func set_overlay(o: int) -> void:
+	overlay = o
+	refresh()
+
+
+const OVERLAY_LOW := Color(0.93, 0.89, 0.78)
+const OVERLAY_HIGH := {
+	Overlay.MOISTURE: Color(0.10, 0.35, 0.85),
+	Overlay.VEGETATION: Color(0.10, 0.50, 0.15),
+	Overlay.SOIL: Color(0.42, 0.26, 0.10),
+	Overlay.WATER: Color(0.15, 0.45, 0.90),
+}
+
+
+## Heat-map color for the active overlay (quantized to 10 steps).
+func overlay_color(i: int) -> Color:
+	var t: int = world.land_type[i]
+	var e := snappedf(world.elevation[i], 1.0 / 16.0)
+	if LandType.is_water(t):
+		var sea := Color(0.07, 0.11, 0.19).lightened(e * 0.3)
+		if overlay == Overlay.WATER:
+			var mud := snappedf(clampf(world.sediment[i] * 12.0, 0.0, 1.0), 0.1)
+			sea = sea.lerp(MUD, mud)
+		return sea
+	var v := 0.0
+	match overlay:
+		Overlay.MOISTURE: v = world.soil_moisture[i]
+		Overlay.VEGETATION: v = world.vegetation_cover[i]
+		Overlay.SOIL: v = world.soil_depth[i]
+		Overlay.WATER: v = clampf(world.flow[i] / 0.25, 0.0, 1.0)
+	var c := OVERLAY_LOW.lerp(OVERLAY_HIGH[overlay], snappedf(v, 0.1))
+	if overlay == Overlay.WATER:
+		c = c.lerp(MUD, snappedf(clampf(world.sediment[i] * 6.0, 0.0, 0.7), 0.1))
+	return c.darkened(0.12 - e * 0.15)
+
+
 func color_for(i: int) -> Color:
+	if overlay != Overlay.NONE:
+		return overlay_color(i)
 	var t: int = world.land_type[i]
 	var c: Color = BASE_COLORS[t]
 	# Elevation shading, quantized to 16 steps so colors stay stable.

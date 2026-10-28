@@ -17,6 +17,9 @@ var sediment := PackedFloat32Array()         ## suspended sediment carried by wa
 var soil_depth := PackedFloat32Array()       ## 0..1 fertile topsoil
 var flow := PackedFloat32Array()             ## smoothed outflow (rivers/streams)
 var erosion_accum := PackedFloat32Array()    ## soil lost since last erosion event (M3)
+# --- Milestone 3: events ---
+var last_event := PackedInt32Array()         ## latest event id at this tile (-1 none)
+var land_cause := PackedInt32Array()         ## event that last changed this tile's land (clear/plant/farm)
 
 # --- Global (non-tile) state ---
 var tick: int = 0
@@ -24,6 +27,12 @@ var rain_today: float = 0.0
 var dry_streak: int = 0
 var sediment_to_sea: float = 0.0   ## sediment entering the sea during the last tick
 var coastal_turbidity: float = 0.0 ## mean sediment over shallow-water tiles
+var coast_muddy: bool = false      ## hysteresis state for MUDDY_WATER events
+var muddy_event: int = -1          ## id of the event that made the coast muddy
+var heavy_rain_event: int = -1
+var drought_event: int = -1
+## [0..2] latest erosion events that have recorded causes, [3..5] latest of any erosion
+var recent_erosion := PackedInt32Array([-1, -1, -1, -1, -1, -1])
 
 
 func _init(w: int = 32, h: int = 32, s: int = 0) -> void:
@@ -40,6 +49,10 @@ func _init(w: int = 32, h: int = 32, s: int = 0) -> void:
 	soil_depth.resize(n)
 	flow.resize(n)
 	erosion_accum.resize(n)
+	last_event.resize(n)
+	last_event.fill(-1)
+	land_cause.resize(n)
+	land_cause.fill(-1)
 
 
 func tile_count() -> int:
@@ -73,6 +86,10 @@ func checksum() -> String:
 	ctx.update(soil_depth.to_byte_array())
 	ctx.update(flow.to_byte_array())
 	ctx.update(erosion_accum.to_byte_array())
-	ctx.update(var_to_bytes([tick, rain_today, dry_streak, sediment_to_sea, coastal_turbidity]))
+	ctx.update(last_event.to_byte_array())
+	ctx.update(land_cause.to_byte_array())
+	ctx.update(recent_erosion.to_byte_array())
+	ctx.update(var_to_bytes([tick, rain_today, dry_streak, sediment_to_sea, coastal_turbidity,
+		coast_muddy, muddy_event, heavy_rain_event, drought_event]))
 	return ctx.finish().hex_encode()
 

@@ -20,6 +20,10 @@ func _init() -> void:
 		if filter != "" and not f.contains(filter):
 			continue
 		var script: GDScript = load("res://tests/" + f)
+		if script == null or not script.can_instantiate():
+			failed += 1
+			print("  FAIL ", f, " (script failed to load / parse)")
+			continue
 		var inst: TestCase = script.new()
 		for m in script.get_script_method_list():
 			var mname: String = m["name"]

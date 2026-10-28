@@ -3,6 +3,7 @@ extends RefCounted
 ## Optional command-line hooks (after `--`), used for automated screenshots:
 ##   godot -- --select=12,14 --screenshot=/tmp/shot.png [--seed=N] [--zoom=1.5]
 ##            [--clear-rect=x0,y0,x1,y1] [--ticks=N] [--speed=0|1|2]
+##            [--overlay=0..4] [--history[=EVENT_TYPE_NAME]]
 
 
 static func handle_cmdline(main: Node) -> void:
@@ -28,6 +29,18 @@ static func handle_cmdline(main: Node) -> void:
 		main.hud.set_day(main.sim.world.tick)
 	if args.has("speed"):
 		main.set_speed(int(args["speed"]))
+	if args.has("overlay"):
+		main.world_view.set_overlay(int(args["overlay"]))
+		main.hud.set_overlay_name(WorldView.OVERLAY_NAMES[int(args["overlay"])])
+	if args.has("history"):
+		var sel := -1
+		var tname := String(args["history"])
+		if tname != "" and EventLog.Type.has(tname):
+			for id in main.sim.events.recent(EventLog.CAPACITY):
+				if main.sim.events.type_of(id) == EventLog.Type[tname]:
+					sel = id
+					break
+		main.hud.show_events(main.sim.events, sel)
 	if args.has("select"):
 		var p: PackedStringArray = String(args["select"]).split(",")
 		main.select_tile(Vector2i(int(p[0]), int(p[1])))

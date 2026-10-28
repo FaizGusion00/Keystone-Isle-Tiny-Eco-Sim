@@ -31,9 +31,18 @@ const PLANT_USE := 0.003
 # Vegetation
 const VEG_GROWTH := 0.032
 const DROUGHT_MOISTURE := 0.08
+# Events (M3)
+const DROUGHT_DAYS := 12
+const EROSION_EVENT := 0.08      ## soil lost (decaying sum) that triggers an EROSION event
+const EROSION_DECAY := 0.97
+const MUDDY_ENTER := 0.045       ## coastal turbidity hysteresis
+const MUDDY_EXIT := 0.030
+const CAUSE_WINDOW := 40         ## days an event stays eligible as a cause
+const RAIN_CAUSE_WINDOW := 3
 
 var world: WorldState
 var rng := RandomNumberGenerator.new()
+var events := EventLog.new()
 
 var _water_next := PackedFloat32Array()
 var _sed_next := PackedFloat32Array()
@@ -41,6 +50,7 @@ var _nbr := PackedInt32Array()   ## 4 neighbour indices per tile, -1 outside the
 var _down := PackedInt32Array()  ## steepest-descent neighbour by terrain elevation (-1 = pit)
 var upstream_area := PackedInt32Array() ## tiles draining through each tile (static, for rivers)
 var _veg_cap := PackedFloat32Array()
+var _erodibility := PackedFloat32Array()
 
 
 static func create(world_seed: int, size: int = 32) -> Simulation:
@@ -80,6 +90,9 @@ func _allocate() -> void:
 	_veg_cap[LandType.GRASSLAND] = 0.70
 	_veg_cap[LandType.FOREST] = 1.0
 	_veg_cap[LandType.HILLS] = 0.45
+	_erodibility.resize(LandType.COUNT)
+	_erodibility.fill(1.0)
+	_erodibility[LandType.BEACH] = 0.1 # coarse sand barely suspends
 
 
 ## Static drainage network from terrain: each land tile drains to its lowest 4-neighbour.
@@ -116,6 +129,7 @@ func step() -> void:
 	_water_flow_and_erosion()
 	_soil_water()
 	_vegetation()
+	_detect_events()
 
 
 func run(ticks: int) -> void:
@@ -133,9 +147,17 @@ func _rainfall() -> void:
 	if roll >= chance:
 		amount = 0.0
 	world.rain_today = amount
-	world.dry_streak = world.dry_streak + 1 if amount == 0.0 else 0
 	if amount == 0.0:
+		world.dry_streak += 1
+		if world.dry_streak == DROUGHT_DAYS:
+			world.drought_event = events.record(world.tick, EventLog.Type.DROUGHT, -1, -1, DROUGHT_DAYS)
 		return
+	if world.dry_streak >= DROUGHT_DAYS and world.drought_event >= 0:
+		events.record(world.tick, EventLog.Type.DROUGHT_ENDED, -1, -1, world.dry_streak)
+		world.drought_event = -1
+	world.dry_streak = 0
+	if amount >= HEAVY_RAIN:
+		world.heavy_rain_event = events.record(world.tick, EventLog.Type.HEAVY_RAIN, -1, -1, amount)
 	var water := world.surface_water
 	var elev := world.elevation
 	var lt := world.land_type
@@ -155,6 +177,7 @@ func _water_flow_and_erosion() -> void:
 	var eacc := world.erosion_accum
 	var nbr := _nbr
 	var down := _down
+	var erod := _erodibility
 	var wn := _water_next
 	var sn := _sed_next
 	wn.fill(0.0)
@@ -201,7 +224,7 @@ func _water_flow_and_erosion() -> void:
 		var move := wi * FLOW_MAX_FRACTION if best_h < 0.0 else minf(wi * FLOW_MAX_FRACTION, (hi - best_h) * 0.5)
 		var slope := clampf((elev[i] - elev[best]) * 12.0, 0.0, 1.0) + 0.1
 		var bare := 1.0 - veg[i]
-		var detach := minf(ERODE_K * move * slope * bare * bare, soil[i])
+		var detach := minf(ERODE_K * erod[lt[i]] * move * slope * bare * bare * bare, soil[i])
 		soil[i] -= detach
 		eacc[i] += detach
 		var carried := si + detach
@@ -272,6 +295,75 @@ func _vegetation() -> void:
 		veg[i] = clampf(v + g, 0.0, 1.0)
 
 
+@warning_ignore("integer_division")
+## Turns state changes into events, linking only the causes the rules below actually used.
+func _detect_events() -> void:
+	var tick := world.tick
+	var eacc := world.erosion_accum
+	var lt := world.land_type
+	var last := world.last_event
+	var lcause := world.land_cause
+	var recent := world.recent_erosion
+	var rain_ev := world.heavy_rain_event if tick - events.tick_of(world.heavy_rain_event) <= RAIN_CAUSE_WINDOW else -1
+	var w := world.width
+	for i in eacc.size():
+		var a := eacc[i] * EROSION_DECAY
+		if a >= EROSION_EVENT and lt[i] > LandType.SHALLOW_WATER:
+			# Cause 1: this tile's land was cleared (bare soil). Cause 2: heavy rain just fell.
+			var lc := lcause[i]
+			var bare_cause := lc if events.type_of(lc) == EventLog.Type.TREES_CLEARED else -1
+			var id := events.record(tick, EventLog.Type.EROSION, i % w, i / w, a, bare_cause, rain_ev)
+			last[i] = id
+			if bare_cause >= 0:
+				recent[2] = recent[1]
+				recent[1] = recent[0]
+				recent[0] = id
+			recent[5] = recent[4]
+			recent[4] = recent[3]
+			recent[3] = id
+			a = 0.0
+		eacc[i] = a
+	# Coastal mud with hysteresis.
+	var turb := world.coastal_turbidity
+	if not world.coast_muddy and turb >= MUDDY_ENTER:
+		var c0 := -1
+		var c1 := -1
+		var c2 := -1
+		var base := 0 if _recent_ok(recent[0], tick) else 3
+		if _recent_ok(recent[base], tick):
+			c0 = recent[base]
+		if _recent_ok(recent[base + 1], tick):
+			c1 = recent[base + 1]
+		if _recent_ok(recent[base + 2], tick):
+			c2 = recent[base + 2]
+		var at := _muddiest_shallow()
+		world.muddy_event = events.record(tick, EventLog.Type.MUDDY_WATER,
+				at % w if at >= 0 else -1, at / w if at >= 0 else -1, turb, c0, c1, c2)
+		if at >= 0:
+			last[at] = world.muddy_event
+		world.coast_muddy = true
+	elif world.coast_muddy and turb < MUDDY_EXIT:
+		events.record(tick, EventLog.Type.WATER_CLEARED, -1, -1, turb, world.muddy_event)
+		world.coast_muddy = false
+		world.muddy_event = -1
+
+
+func _recent_ok(id: int, tick: int) -> bool:
+	return events.has(id) and tick - events.tick_of(id) <= CAUSE_WINDOW
+
+
+func _muddiest_shallow() -> int:
+	var sed := world.sediment
+	var lt := world.land_type
+	var best := -1
+	var best_s := -1.0
+	for i in sed.size():
+		if lt[i] == LandType.SHALLOW_WATER and sed[i] > best_s:
+			best_s = sed[i]
+			best = i
+	return best
+
+
 # ---------------------------------------------------------------- actions
 
 ## Validates without mutating. Returns "" if allowed, else a short reason.
@@ -295,11 +387,26 @@ func apply_action(action: int, x: int, y: int) -> bool:
 	if can_apply(action, x, y) != "":
 		return false
 	var i := world.index(x, y)
+	var ev := -1
 	match action:
 		Action.CLEAR_TREES:
 			world.land_type[i] = LandType.LOWLAND if world.elevation[i] < IslandGenerator.LOWLAND_MAX else LandType.GRASSLAND
 			world.vegetation_cover[i] = 0.06
+			ev = events.record(world.tick, EventLog.Type.TREES_CLEARED, x, y, 0.0)
 		Action.PLANT_TREES:
 			world.land_type[i] = LandType.FOREST
 			world.vegetation_cover[i] = maxf(world.vegetation_cover[i], 0.25)
+			ev = events.record(world.tick, EventLog.Type.TREES_PLANTED, x, y, 0.0)
+	world.land_cause[i] = ev
+	world.last_event[i] = ev
 	return true
+
+
+## World checksum plus the event log (full deterministic state minus the RNG).
+func state_checksum() -> String:
+	var ctx := HashingContext.new()
+	ctx.start(HashingContext.HASH_SHA256)
+	ctx.update(world.checksum().to_utf8_buffer())
+	ctx.update(events.checksum_bytes())
+	ctx.update(var_to_bytes([rng.seed, rng.state]))
+	return ctx.finish().hex_encode()
