@@ -917,7 +917,7 @@ func _tool_button(text: String, icon_name: String, t: int) -> Button:
 	col.add_child(name)
 	var cost := UiKit.label("", 0, "Badge")
 	cost.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	cost.add_theme_font_size_override("font_size", 11)
+	cost.add_theme_font_size_override("font_size", 12)
 	cost.visible = t > 0
 	col.add_child(cost)
 	if t >= 0:

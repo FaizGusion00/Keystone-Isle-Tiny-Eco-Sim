@@ -284,3 +284,31 @@ func test_scored_results_banner_prestige_and_sandbox_rare_events() -> void:
 	main.restart_scenario()
 	assert_true(main.sim.world.rare_events, "restart keeps the rare-events option")
 	_free(main)
+
+
+## Accessibility floor on every screen and the HUD: touch targets >= 44 logical px, text >= 12 px.
+func _a11y_walk(n: Node, out: Array) -> void:
+	if n is CanvasItem and not (n as CanvasItem).is_visible_in_tree():
+		return
+	if n is BaseButton:
+		var s: Vector2 = (n as Control).get_combined_minimum_size()
+		if s.x < 44.0 or s.y < 44.0:
+			out.append("button %s %s" % [n.name, s])
+	if n is Label and (n as Label).get_theme_font_size("font_size") < 12:
+		out.append("label '%s' %d px" % [String((n as Label).text).left(24), (n as Label).get_theme_font_size("font_size")])
+	for c in n.get_children():
+		_a11y_walk(c, out)
+
+
+func test_touch_targets_and_text_size_floor() -> void:
+	var main := _main()
+	for n in SCREENS:
+		main.screens.open(n, {}, false)
+		var out := []
+		_a11y_walk(main.screens, out)
+		assert_eq(out, [], n)
+	main.screens.close()
+	var hud_out := []
+	_a11y_walk(main.hud, hud_out)
+	assert_eq(hud_out, [], "hud")
+	_free(main)
