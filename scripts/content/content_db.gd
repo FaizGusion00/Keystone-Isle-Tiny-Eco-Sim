@@ -71,6 +71,9 @@ static func validate() -> PackedStringArray:
 			for k in m.get(sect, {}):
 				if not k in allowed:
 					errs.append("mutator %s: unknown key %s.%s" % [id, sect, k])
+		var from := str(m.get("from", ""))
+		if from != "" and (from.length() != 8 or not from.is_valid_int()):
+			errs.append("mutator %s: \"from\" must be YYYYMMDD" % id)
 		if float(m.get("score_mult", 0.0)) <= 0.0:
 			errs.append("mutator %s: score_mult must be > 0" % id)
 	for mname in ["daily", "weekly", "endless"]:

@@ -87,6 +87,7 @@ func test_locusts_spare_farms_near_forest_and_frogs_stop_them() -> void:
 	var ws := sim.world
 	var near := -1
 	var far := -1
+	var bare := -1
 	for i in ws.tile_count():
 		if ws.land_type[i] != LandType.GRASSLAND and ws.land_type[i] != LandType.LOWLAND:
 			continue
@@ -94,6 +95,8 @@ func test_locusts_spare_farms_near_forest_and_frogs_stop_them() -> void:
 			if near < 0: near = i
 		elif far < 0:
 			far = i
+		elif bare < 0:
+			bare = i
 	assert_true(near >= 0 and far >= 0, "test island has both kinds of tile")
 	for i in [near, far]:
 		ws.structure[i] = WorldState.Structure.FARM
@@ -108,6 +111,15 @@ func test_locusts_spare_farms_near_forest_and_frogs_stop_them() -> void:
 	assert_eq(sim.events.type_of(ws.rare_event), EventLog.Type.LOCUSTS)
 	assert_eq(ws.rare_hits, 1)
 	assert_true(sim.events.explain(ws.rare_event).size() >= 1)
+	assert_eq(ws.last_event[far], ws.rare_event)
+	if bare >= 0: # a farm with nothing growing was not stripped, so it must not blame the swarm
+		ws.structure[bare] = WorldState.Structure.FARM
+		ws.crop_growth[bare] = 0.0
+		ws.last_event[bare] = -1
+		ws.crop_growth[far] = 0.6
+		ws.rare_event = -1
+		sim._locusts()
+		assert_eq(ws.last_event[bare], -1)
 
 
 func test_king_tide_spares_coast_beside_forest() -> void:
@@ -376,3 +388,25 @@ func test_endless_census_grows_each_year() -> void:
 	assert_eq(sc.status, Scenario.Status.FAILED)
 	assert_true(sc.reason.contains("census"), sc.reason)
 	assert_true(sc.final_score > 0)
+
+
+func test_new_mutators_never_change_existing_islands() -> void:
+	var id := ScenarioCatalog.daily_id({"year": 2026, "month": 10, "day": 30})
+	var before: Dictionary = ScenarioCatalog.get_def(id).duplicate(true)
+	var data: Dictionary = ContentDB.file("mutators").duplicate(true)
+	var extra: Dictionary = {"id": "test_future", "title": "Future", "icon": "sun", "blurb": "-",
+		"score_mult": 1.2, "mul": {"climate_rain": 0.5}, "from": "20261115"}
+	data["mutators"].append(extra)
+	ContentDB._cache["mutators"] = data
+	var after: Dictionary = ScenarioCatalog.get_def(id)
+	assert_eq(after["mutators"], before["mutators"], "a dated mutator stays out of earlier islands")
+	assert_eq(after["score_mult"], before["score_mult"])
+	var seen := false
+	for k in 60:
+		var later := ScenarioCatalog.daily_id(Time.get_date_dict_from_unix_time(
+			Time.get_unix_time_from_datetime_string("2026-11-15T12:00:00") + k * 86400))
+		if ScenarioCatalog.get_def(later)["mutators"].has("test_future"):
+			seen = true
+	assert_true(seen, "it enters the pool from its date")
+	assert_eq(ContentDB.validate().size(), 0, str(ContentDB.validate()))
+	ContentDB.clear_cache()

@@ -8,7 +8,7 @@
      "needs": "70+ fish and clear coastal water.",
      "effect": "Villagers gather eggs: a little extra food every day."},
     {"id": "frogs", "bit": 4, "title": "Tree frogs", "icon": "droplets",
-     "needs": "Standing fresh water - ponds, wet lowland or a dam reservoir.",
+     "needs": "Standing fresh water on at least 4 tiles - ponds, wet lowland or a dam reservoir.",
      "effect": "Eat insects: locust swarms cannot take hold while frogs are present."},
     {"id": "wolves", "bit": 8, "title": "Island wolves", "icon": "skull",
      "needs": "A large wild goat herd (22+) and a quarter of the island forested.",

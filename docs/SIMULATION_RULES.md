@@ -132,3 +132,36 @@ Trees cleared*. Scenario state is part of the save and the checksum.
 `100 × (0.2·plants + 0.2·soil + 0.15·water clarity + 0.15·fish + 0.1·wildlife + 0.2·village)`, each part in 0–1:
 plants = mean land vegetation / 0.55, soil = mean depth / 0.75, water = 1 − (turbidity − 0.01)/0.05, fish / 100,
 goats / 25, village = min(food EMA, water EMA).
+
+## 13. Rare events (`_rare`, only when `world.rare_events` — daily / weekly / endless and sandbox)
+- At most one per day, from a single deterministic roll `_chance(0, 101)`, and none within **30 days** of the
+  previous one (`RARE_COOLDOWN`). Each hit increments `rare_hits` and is shown in the codex once seen.
+- **Locusts** — dry season or drought, chance 0.01/day. Every farm with crop > 5 % and **no forest within 2 tiles**
+  loses its crop. Caused by the drought (or dry season). Counter: forest near farms; **frogs block swarms
+  entirely**. Only the stripped farms point at the event in the inspector.
+- **Algal bloom** — summer, chance 0.012/day, only if coastal turbidity > 0.025 **and** ≥ 3 farms. Fish × 0.65.
+  Caused by the current muddy-coast event, if any. Counter: keep the coast clear (slope forest, restore bare land).
+- **King tide** — wet season, chance 0.008/day. Beach/lowland tiles orthogonally next to water with **no forest
+  within 1 tile**: vegetation × 0.5, moisture 1, farm crops wiped. Counter: coastal forest (a mangrove belt).
+
+## 14. Species (`species_supported`, checked every 10 days)
+Pure function of the current state; arrivals and departures are logged (`SPECIES_ARRIVED` / `SPECIES_LEFT`) and
+`species_seen` accumulates for scoring and the codex.
+
+| Species | Habitat rule | Effect while present |
+|---|---|---|
+| Bees | forest tiles ≥ 1/6 of land, and ≥ 1 farm | crop growth × 1.15 |
+| Seabirds | fish ≥ 70 and coastal turbidity < 0.03 | +0.25 food/day to the village store |
+| Frogs | ≥ 4 land tiles with surface water > 0.02 or reservoir > 0.05 | locust swarms cannot happen |
+| Wolves | goats ≥ 22 and forest ≥ 1/4 of land | goats × (1 − 0.004) per day (less grazing) |
+
+## 15. Seeded modes: endless escalation, census, scoring
+- **Endless**: every 120 days `climate_storm × 1.08` (cap 3), `climate_fire × 1.08` (cap 4), `climate_rain × 0.95`
+  (floor 0.45). At each year end the village needs `min(6 + 1 × year, 20)` villagers (year 0 = first census), else
+  the run ends (FAILED, scored). Any mode also fails at ≤ `fail_villagers` villagers (daily/weekly 5, endless 4).
+- **Daily / weekly**: survive 240 / 360 days with 2 / 3 mutators drawn deterministically from the id; a mutator
+  is only eligible if its `from` date ≤ the island's date, so adding content never changes existing islands.
+- **Score** (weights in `data/modes.json`): `1·days + 6·keystone + 12·peak villagers + 3·harvests
+  + 40·species seen + 25·rare events weathered − 8·villagers lost`, × the product of the mutators' `score_mult`,
+  floored at 0. Medal thresholds per mode (bronze/silver/gold); relaxed runs score but earn no medal. The score
+  is frozen when the run ends (won or failed).

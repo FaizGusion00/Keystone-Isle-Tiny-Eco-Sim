@@ -200,10 +200,15 @@ static func _pretty_date(ymd: String) -> String:
 
 
 ## Picks `count` distinct mutators with a seeded RNG (deterministic for a given seed).
-static func pick_mutators(world_seed: int, count: int) -> Array:
+## `date_key` (YYYYMMDD of the daily/weekly) limits the pool to mutators whose optional "from"
+## date has arrived, so adding content never changes an island that already exists (saved
+## runs, bests, players on the same day). New mutators must be appended with a future "from".
+static func pick_mutators(world_seed: int, count: int, date_key := "") -> Array:
 	var pool: Array = []
 	for m in ContentDB.mutators():
-		pool.append(str(m["id"]))
+		var from := str(m.get("from", ""))
+		if from == "" or (date_key != "" and from <= date_key):
+			pool.append(str(m["id"]))
 	var rng := RandomNumberGenerator.new()
 	rng.seed = world_seed * 7919 + 17
 	var out: Array = []
@@ -219,7 +224,7 @@ static func generated_def(id: String) -> Dictionary:
 	if mode == "" or md.is_empty() or key == "" or not key.is_valid_int():
 		return {}
 	var world_seed := int(key) if mode == "endless" else stable_hash(id)
-	var muts: Array = [] if mode == "endless" else pick_mutators(world_seed, int(md.get("mutators", 0)))
+	var muts: Array = [] if mode == "endless" else pick_mutators(world_seed, int(md.get("mutators", 0)), key)
 	var mult := 1.0
 	for mid in muts:
 		mult *= float(ContentDB.mutator(mid).get("score_mult", 1.0))

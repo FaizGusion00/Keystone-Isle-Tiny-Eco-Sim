@@ -848,23 +848,19 @@ func _forest_within(i: int, r: int) -> bool:
 func _locusts() -> void:
 	if (world.species & SP_FROGS) != 0:
 		return
-	var hit := 0
-	var first := -1
+	var stripped := PackedInt32Array()
 	for i in world.structure.size():
 		if world.structure[i] == WorldState.Structure.FARM and world.crop_growth[i] > 0.05 and not _forest_within(i, 2):
 			world.crop_growth[i] = 0.0
-			hit += 1
-			if first < 0:
-				first = i
-	if hit == 0:
+			stripped.append(i)
+	if stripped.is_empty():
 		return
-	var c := world.coords(first)
+	var c := world.coords(stripped[0])
 	var dr := world.drought_event if world.drought_event >= 0 else world.season_event
-	world.rare_event = events.record(world.tick, EventLog.Type.LOCUSTS, c.x, c.y, hit, dr)
+	world.rare_event = events.record(world.tick, EventLog.Type.LOCUSTS, c.x, c.y, stripped.size(), dr)
 	world.rare_hits += 1
-	for i in world.structure.size():
-		if world.structure[i] == WorldState.Structure.FARM and world.crop_growth[i] == 0.0:
-			world.last_event[i] = world.rare_event
+	for i in stripped: # only the farms the swarm actually stripped point at it
+		world.last_event[i] = world.rare_event
 
 
 ## Farm runoff + muddy water: a bloom kills a third of the fish.
