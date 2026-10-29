@@ -248,13 +248,23 @@ func test_juice_floaters_respect_reduce_motion() -> void:
 	ws.food_store += 30.0
 	main.hud.set_status(ws)
 	var f: Control = main.hud._chips["food"]["panel"]
-	assert_true(f.has_meta("floater") and is_instance_valid(f.get_meta("floater")), "a harvest floats +N off the food chip")
-	assert_eq((f.get_meta("floater") as Label).text, "+30")
+	var fl: Dictionary = main.hud._floaters
+	assert_true(fl.has("food") and is_instance_valid(fl["food"]), "a harvest floats +N off the food chip")
+	assert_eq((fl["food"] as Label).text, "+30")
 	ws.food_store += 1.0
-	var before: Label = f.get_meta("floater")
+	var before: Label = fl["food"]
 	main.hud.set_status(ws)
-	assert_eq((f.get_meta("floater") as Label).text, "+30", "tiny changes stay quiet")
-	assert_true(f.get_meta("floater") == before, "one floater per chip")
+	assert_eq((fl["food"] as Label).text, "+30", "tiny changes stay quiet")
+	assert_true(fl["food"] == before, "one floater per chip")
+	# the badge stays on its own chip: never over the Health chip or a neighbour, in any layout
+	var fr: Rect2 = before.get_global_rect()
+	var cr: Rect2 = f.get_global_rect()
+	assert_true(fr.position.x >= cr.position.x and fr.end.x <= cr.end.x + 0.5, "badge within its chip's width")
+	assert_true(fr.end.y <= cr.end.y and fr.position.y >= cr.position.y - fr.size.y * 0.5, "badge on its chip's top edge")
+	for k in main.hud._chips:
+		var other: Control = main.hud._chips[k]["panel"]
+		if other != f and other.is_visible_in_tree():
+			assert_false(fr.grow(-1.0).intersects(other.get_global_rect()), "badge clear of the %s chip" % k)
 	var old := UiKit.reduce_motion
 	UiKit.reduce_motion = true
 	main.ambience.reduce_motion = true
@@ -450,4 +460,24 @@ func test_exit_waits_for_the_mixer_not_a_timer() -> void:
 	for p in ([] if AudioDirector.current == null else AudioDirector.current.find_children("*", "AudioStreamPlayer", true, false)):
 		assert_false((p as AudioStreamPlayer).playing, "every player stopped")
 		assert_true((p as AudioStreamPlayer).stream == null, "every stream dropped")
+	_free(main)
+
+
+func test_new_island_is_framed_in_the_free_play_area() -> void:
+	var main := _main()
+	main.hud.relayout()
+	main.camera.user_moved = false
+	main.frame_island()
+	var free: Rect2 = main.hud.play_rect()
+	var land: Rect2 = main._land_bounds()
+	var vs: Vector2 = main.get_viewport().get_visible_rect().size
+	var z: float = main.camera.zoom.x
+	var c: Vector2 = (land.get_center() - main.camera.position) * z + vs * 0.5
+	assert_true(c.distance_to(free.get_center()) < 4.0, "island centred between the HUD rows and the toolbar")
+	assert_true(land.size.y * z <= free.size.y + 0.5, "the whole island height fits")
+	# once the player pans, rotation/resize no longer yanks the camera back
+	main.camera.drag_by(Vector2(40, 0))
+	var at: Vector2 = main.camera.position
+	main.frame_island()
+	assert_true(main.camera.position == at, "manual framing is kept")
 	_free(main)

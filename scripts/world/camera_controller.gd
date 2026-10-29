@@ -20,6 +20,7 @@ var _touch_dragged := false
 var _pinch_dist := 0.0
 var _pinch_zoom := 1.0
 var input_enabled := true      ## false while a full-screen menu is open
+var user_moved := false        ## the player panned or zoomed since the last automatic framing
 var smooth := true             ## eased wheel/key zoom and glides (off with reduce motion)
 var _zoom_target := 0.0        ## 0 = no zoom animation running
 var _zoom_anchor := Vector2.ZERO
@@ -50,7 +51,7 @@ func fit_to(r: Rect2) -> void:
 ## Frames world rect `r` inside `screen_rect` (viewport px), e.g. the open sea beside the title
 ## menu. Not clamped to the map bounds, so the island can sit off-centre.
 ## Returns the camera position used (Vector2.INF if the rects were unusable).
-func frame_in(r: Rect2, screen_rect: Rect2) -> Vector2:
+func frame_in(r: Rect2, screen_rect: Rect2, instant := false) -> Vector2:
 	var vs := get_viewport_rect().size
 	if r.size.x <= 0.0 or r.size.y <= 0.0 or screen_rect.size.x < 40.0 or screen_rect.size.y < 40.0:
 		return Vector2.INF
@@ -58,7 +59,7 @@ func frame_in(r: Rect2, screen_rect: Rect2) -> Vector2:
 	_zoom_target = 0.0
 	_glide_to = Vector2.INF
 	var to := r.get_center() - (screen_rect.get_center() - vs * 0.5) / z
-	if not smooth or position.distance_to(to) > 4000.0:
+	if instant or not smooth or position.distance_to(to) > 4000.0:
 		zoom = Vector2(z, z)
 		position = to
 		return to
@@ -84,6 +85,7 @@ func glide_to(world_pos: Vector2, z := 0.0) -> void:
 
 ## Eased zoom toward screen_pos (wheel / keys). Falls back to zoom_at without smoothing.
 func zoom_smooth(screen_pos: Vector2, factor: float) -> void:
+	user_moved = true
 	if not smooth:
 		zoom_at(screen_pos, factor)
 		return
@@ -121,6 +123,7 @@ func _process(delta: float) -> void:
 		return
 	var dir := Input.get_vector("ui_left", "ui_right", "ui_up", "ui_down")
 	if dir != Vector2.ZERO:
+		user_moved = true
 		position += dir * KEY_PAN_SPEED * delta / zoom.x
 		_clamp()
 
@@ -190,6 +193,7 @@ func _unhandled_input(event: InputEvent) -> void:
 			var a: Vector2 = pts[0]
 			var b: Vector2 = pts[1]
 			_zoom_target = 0.0
+			user_moved = true
 			var target := clampf(_pinch_zoom * a.distance_to(b) / _pinch_dist, MIN_ZOOM, MAX_ZOOM)
 			zoom_at((a + b) * 0.5, target / zoom.x)
 	elif event is InputEventKey and event.pressed:
@@ -202,6 +206,7 @@ func _unhandled_input(event: InputEvent) -> void:
 
 ## Pan by a screen-space drag delta and remember how fast the finger was moving.
 func drag_by(rel: Vector2) -> void:
+	user_moved = true
 	var d := -rel / zoom.x
 	position += d
 	_clamp()

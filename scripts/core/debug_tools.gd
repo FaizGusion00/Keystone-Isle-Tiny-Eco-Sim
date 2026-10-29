@@ -17,6 +17,8 @@ static func handle_cmdline(main: Node) -> void:
 		return
 	if args.has("seed"):
 		main.new_world(int(args["seed"]))
+	if args.has("zoom") or args.has("focus"):
+		main.camera.user_moved = true  # an explicit framing wins over the automatic island fit
 	if args.has("zoom"):
 		var z := float(args["zoom"])
 		main.camera.zoom = Vector2(z, z)

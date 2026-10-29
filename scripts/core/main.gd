@@ -194,6 +194,7 @@ func _on_window_resized() -> void:
 	if win.content_scale_size != want:
 		win.content_scale_size = want
 	hud.relayout()
+	frame_island.call_deferred()
 
 
 func new_world(world_seed: int) -> void:
@@ -340,6 +341,22 @@ func _on_screen_changed(screen_name: String) -> void:
 			camera.position = v["pos"]
 
 
+## Fits the island's land (not the surrounding sea) into the screen area the HUD leaves free.
+## Runs for a new island and on rotation / resize until the player pans or zooms.
+func frame_island() -> void:
+	if not is_inside_tree() or sim == null or camera.user_moved or not _menu_view.is_empty():
+		return
+	var free := hud.play_rect()
+	if free.size.x < 40.0 or free.size.y < 40.0:
+		return
+	var land := _land_bounds()
+	if free.size.y > free.size.x * 1.15:
+		# Portrait: a whole iso diamond would be a thin strip. Let the far east/west tips
+		# (mostly beach and sea) run off-screen so the island fills the screen's height.
+		land = land.grow_individual(-land.size.x * 0.14, 0, -land.size.x * 0.14, 0)
+	camera.frame_in(land, free, true)
+
+
 ## Called by the title menu once laid out: shows the whole island in the free space beside it.
 func frame_menu_view(free: Rect2) -> void:
 	if sim == null:
@@ -387,6 +404,8 @@ func set_simulation(s: Simulation) -> void:
 	ambience.set_world(world_view)
 	_menu_view = {}
 	camera.set_bounds(Iso.map_bounds(sim.world.width, sim.world.height).grow_individual(0, WorldView.MAX_H, 0, 0))
+	camera.user_moved = false
+	frame_island.call_deferred()
 	hud.set_seed(sim.world.world_seed)
 	hud.set_day(sim.world.tick)
 	hud.set_status(sim.world)

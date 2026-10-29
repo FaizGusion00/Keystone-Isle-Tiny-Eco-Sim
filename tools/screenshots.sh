@@ -15,7 +15,7 @@ shot() { # w h name args...
 	[ -f "$OUT/$n.png" ] && echo "ok  $n" || echo "FAIL $n"
 }
 FLOOD="--scenario=floodplain --farms-at=11,12;11,11;10,12 --until=FLOOD --no-results --zoom=1.8 --focus=event"
-GAME="--scenario=expanding_village --farms=2 --ticks=160 --no-results --zoom=1.4 --focus=village"
+GAME="--scenario=expanding_village --farms=2 --ticks=160 --no-results"
 CHAIN="--seed=7 --clear-rect=8,8,30,30 --farms=3 --ticks=700 --zoom=1.2 --focus=village --history=MUDDY_WATER"
 DAM="--scenario=dam_decision --dams=1 --ticks=30 --no-results --zoom=2.2 --focus=dam --select=dam"
 for o in "landscape 1280 720" "portrait 720 1280" "desktop 1920 1080"; do

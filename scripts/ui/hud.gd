@@ -159,6 +159,9 @@ const MINOR_TYPES := [EventLog.Type.EROSION]
 # toasts
 var _toasts: VBoxContainer
 var _stack: VBoxContainer   ## the one notification column: award banner on top, toasts below
+var _play_rect := Rect2()      ## screen area left free between the top HUD rows and the toolbar
+var _floaters := {}           ## chip key -> its live gain badge
+var _toast_room := 3          ## toasts that fit in the rail above whatever sits below it
 var _last_toast := ""
 # award banner: achievements / unlocks / level-ups, shown one at a time (never stacked)
 var _award: PanelContainer
@@ -328,25 +331,33 @@ func _layout(sz: Vector2) -> void:
 	events_panel.position = Vector2(hx, hy)
 	events_panel.custom_minimum_size = Vector2(hw, 0)
 	events_panel.size = Vector2(hw, maxf(240.0, bottom_y - hy))
-	# --- toasts under the top row, centred in whatever space the side panels leave free
+	# --- notifications: one left-hand rail under the goals card (or beside the open history
+	# drawer), in every layout, so toasts never float over the middle of the island
 	var tl := l
+	if not portrait and events_panel.visible:
+		tl = hx + hw + 12.0
 	var tr := r
-	if not portrait:
-		if events_panel.visible:
-			tl = hx + hw + 12.0
-		elif _obj_card.visible:
-			tl = maxf(tl, _obj_card.position.x + _obj_card.size.x + 12.0)
-		if _inspector.visible:
-			tr = _inspector.position.x - 12.0
-	var tw := minf(520.0, maxf(200.0, tr - tl))
+	if not portrait and _inspector.visible:
+		tr = _inspector.position.x - 12.0
+	var tw := minf(minf(372.0, w) if not portrait else minf(440.0, w), maxf(200.0, tr - tl))
 	_stack.custom_minimum_size.x = tw
 	_stack.size.x = tw
 	# a phone-portrait history drawer already lists every event, so toasts stay out of its way
 	_toasts.visible = not (portrait and events_panel.visible)
 	var toast_y := top_bottom + 4.0
-	if portrait and _obj_card.visible:
-		toast_y = _obj_card.position.y + _obj_card.size.y + 8.0  # the goals card owns the top-left
-	_stack.position = Vector2(tl + (tr - tl - tw) * 0.5, toast_y)
+	if _obj_card.visible and not (not portrait and events_panel.visible):
+		toast_y = _obj_card.position.y + _obj_card.size.y + 8.0  # the goals card heads the rail
+	_stack.position = Vector2(tl, toast_y)
+	# how many toasts fit before the legend / inspector / toolbar below the rail
+	var floor_y := bottom_y
+	if _legend.visible:
+		floor_y = minf(floor_y, _legend.position.y - 8.0)
+	if portrait and _inspector.visible:
+		floor_y = minf(floor_y, _inspector.position.y - 8.0)
+	if portrait and _side.visible:
+		floor_y = minf(floor_y, _side.position.y - 8.0)
+	_toast_room = clampi(floori((floor_y - toast_y - 80.0) / 52.0), 1, 3)
+	_play_rect = Rect2(l, top_bottom, w, bottom_y - top_bottom)
 	# --- popup + scrim
 	_scrim.position = Vector2.ZERO
 	_scrim.size = sz
@@ -559,7 +570,9 @@ func _chip(key: String, text: String, warn: bool) -> void:
 		ic.self_modulate = UiKit.CORAL if warn else UiKit.TEAL_DARK
 
 
-## A small "+N" rises off a chip when that stock grows (harvest, new villager, cleared forest).
+## A small "+N" badge pops on a chip's top-right corner when that stock grows (harvest, new
+## villager, cleared forest). It stays pinned to its own chip (no drift), so it can never land on
+## the Health bar or a neighbouring chip, whichever layout the chips wrap into.
 func _gain_floaters(ws: WorldState) -> void:
 	var now := {"food": ws.food_store, "wood": ws.wood, "villagers": float(ws.villagers)}
 	var same := _chip_ws == ws.get_instance_id() and not ws.free_build
@@ -571,36 +584,72 @@ func _gain_floaters(ws: WorldState) -> void:
 		_chip_prev[key] = v
 
 
+## Inside the chip's right edge, straddling its top border by a third of the badge height.
+func _pin_floater(key: String, l: Label) -> void:
+	var r := (_chips[key]["panel"] as Control).get_global_rect()
+	l.position = Vector2(r.end.x - l.size.x - 4.0, r.position.y - l.size.y * 0.35) - root.global_position
+	l.pivot_offset = l.size * 0.5
+
+
+## Badges follow their chip while alive (chips settle a frame after a relayout or rotation).
+func _process(_delta: float) -> void:
+	var live := false
+	for key in _floaters.keys():
+		var l = _floaters[key]
+		if is_instance_valid(l) and not (l as Label).is_queued_for_deletion():
+			_pin_floater(key, l)
+			live = true
+		else:
+			_floaters.erase(key)
+	if not live:
+		set_process(false)
+
+
 func chip_floater(key: String, text: String) -> Label:
 	var p: Control = _chips[key]["panel"]
 	if not p.is_visible_in_tree():
 		return null
 	var l: Label = null
-	if p.has_meta("floater") and is_instance_valid(p.get_meta("floater")):
-		l = p.get_meta("floater")  # one per chip: retarget instead of stacking
+	if _floaters.has(key) and is_instance_valid(_floaters[key]):
+		l = _floaters[key]  # one per chip, even across chip rebuilds: retarget instead of stacking
 		l.text = text
 	else:
-		l = UiKit.label(text, 15, "Value")
-		l.add_theme_color_override("font_color", UiKit.LEAF)
-		l.add_theme_color_override("font_outline_color", Color(1, 1, 1, 0.9))
-		l.add_theme_constant_override("outline_size", 4)
+		l = UiKit.label(text, 13, "Value")
+		l.add_theme_color_override("font_color", Color.WHITE)
+		var sb := StyleBoxFlat.new()
+		sb.bg_color = UiKit.LEAF.darkened(0.12)
+		sb.set_corner_radius_all(9)
+		sb.content_margin_left = 6
+		sb.content_margin_right = 6
+		sb.content_margin_top = 0
+		sb.content_margin_bottom = 1
+		sb.shadow_color = Color(0, 0, 0, 0.18)
+		sb.shadow_size = 2
+		l.add_theme_stylebox_override("normal", sb)
 		l.mouse_filter = Control.MOUSE_FILTER_IGNORE
 		root.add_child(l)
-		p.set_meta("floater", l)
+		_floaters[key] = l
 	l.reset_size()
-	var r := p.get_global_rect()
-	var at := Vector2(r.end.x - l.size.x * 0.6, r.end.y - 6.0) - root.global_position
-	l.position = at
+	_pin_floater(key, l)
+	set_process(true)
 	l.modulate.a = 1.0
+	l.scale = Vector2.ONE
 	if l.has_meta("tw"):
 		(l.get_meta("tw") as Tween).kill()
-	var tw := l.create_tween().set_parallel(true)
+	var tw := l.create_tween()
 	if not UiKit.reduce_motion:
-		tw.tween_property(l, "position", at + Vector2(0, 14), 0.9).set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_OUT)
-	tw.tween_property(l, "modulate:a", 0.0, 0.4).set_delay(0.8)
-	tw.chain().tween_callback(l.queue_free)
+		l.scale = Vector2(0.6, 0.6)
+		tw.tween_property(l, "scale", Vector2.ONE, 0.25).set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT)
+	tw.tween_interval(1.1)
+	tw.tween_property(l, "modulate:a", 0.0, 0.4)
+	tw.tween_callback(l.queue_free)
 	l.set_meta("tw", tw)
 	return l
+
+
+## Screen rect the island can use: below the top HUD rows, above the toolbar.
+func play_rect() -> Rect2:
+	return _play_rect
 
 
 func status_text() -> String:
@@ -1495,11 +1544,11 @@ func toast(msg: String, seconds: float = 2.5, icon_name: String = "", bad: bool 
 	l.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	l.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	row.add_child(l)
-	p.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
+	p.size_flags_horizontal = Control.SIZE_SHRINK_BEGIN
 	l.custom_minimum_size.x = minf(l.get_theme_font("font").get_string_size(msg, HORIZONTAL_ALIGNMENT_LEFT, -1, 17).x + 4.0,
 		minf(440.0, maxf(140.0, _stack.custom_minimum_size.x - 64.0)))
 	_toasts.add_child(p)
-	while _toasts.get_child_count() > 3:
+	while _toasts.get_child_count() > _toast_room:
 		var old := _toasts.get_child(0)
 		_toasts.remove_child(old)
 		old.queue_free()
@@ -1521,7 +1570,7 @@ func _build_award() -> void:
 	_award = UiKit.card("Award")
 	_award.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	_award.visible = false
-	_award.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
+	_award.size_flags_horizontal = Control.SIZE_SHRINK_BEGIN
 	var row := UiKit.hbox(12)
 	_award.add_child(row)
 	_award_icon = UiKit.icon_badge("award", UiKit.AMBER_SOFT, UiKit.AMBER_DARK, 44)
