@@ -774,9 +774,9 @@ const BEE_POLLINATION := 1.15
 const WOLF_PREDATION := 0.004
 const SEABIRD_EGGS := 0.25          ## food per day while seabirds nest
 const SPECIES_PERIOD := 10          ## days between habitat checks
-const LOCUST_CHANCE := 0.006        ## per dry day
+const LOCUST_CHANCE := 0.01         ## per dry day
 const BLOOM_CHANCE := 0.012         ## per summer day with muddy, farmed coasts
-const TIDE_CHANCE := 0.004          ## per rainy-season day
+const TIDE_CHANCE := 0.008          ## per rainy-season day
 const RARE_COOLDOWN := 30           ## minimum days between rare events
 
 
@@ -910,10 +910,11 @@ func _king_tide() -> void:
 	world.rare_hits += 1
 
 
-## Endless mode: each new year storms and fire risk grow 8% fiercer (capped).
+## Endless mode: each new year storms and fire risk grow 8% fiercer and rain 5% scarcer (capped).
 func _escalate() -> void:
 	world.climate_storm = minf(world.climate_storm * 1.08, 3.0)
 	world.climate_fire = minf(world.climate_fire * 1.08, 4.0)
+	world.climate_rain = maxf(world.climate_rain * 0.95, 0.45)
 
 
 # ---------------------------------------------------------------- hazards (M6)

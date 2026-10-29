@@ -17,6 +17,8 @@ var audio: AudioDirector
 var screens: Screens
 var settings := GameSettings.new()
 var progress := Progress.new()
+## Online-ready seam (Play Games / Game Center / cloud saves later). Offline no-op today.
+var services: PlatformServices = OfflinePlatformServices.new()
 
 const AUTOSAVE_EVERY := 30 ## ticks
 
@@ -471,12 +473,16 @@ func _check_achievements(force: bool) -> Array:
 		return []
 	_ach_tick = sim.world.tick
 	var fresh := progress.grant(Achievements.check(sim, progress.stars, progress.achievements))
+	var found := progress.observe(sim)
+	for t in found:
+		hud.award(str(t), "New journal entry", "book-open")
 	for id in fresh:
+		services.unlock_achievement(str(id))
 		var info := Achievements.get_info(str(id))
 		hud.award(str(info.get("title", id)), "Achievement unlocked", str(info.get("icon", "award")))
 	if not fresh.is_empty():
 		AudioDirector.sfx("star")
-	if not fresh.is_empty() and persistence:
+	if (not fresh.is_empty() or not found.is_empty()) and persistence:
 		progress.save()
 	return fresh
 
@@ -502,7 +508,13 @@ func _check_scenario() -> void:
 	_speed_before_pause = clock.speed
 	set_speed(SimClock.Speed.PAUSED)
 	var won := _scenario_status == Scenario.Status.WON
-	progress.record_result(sim.scenario.id, won, sim.scenario.stars if won else 0)
+	var sc := sim.scenario
+	progress.record_result(sc.id, won, sc.stars if won else 0)
+	var pts := sc.score(sim.world)
+	var run := progress.record_run(sc.id, won, sc.stars if won else 0, pts, sc.days_elapsed(sim.world),
+		sc.stars if sc.is_scored() else 0)
+	if sc.is_scored() and not sim.world.relaxed:
+		services.submit_score(sc.id, pts)
 	var fresh := _check_achievements(true)
 	if persistence:
 		progress.save()
@@ -512,7 +524,7 @@ func _check_scenario() -> void:
 		hud.show_popup(("Island complete! " if won else "Island lost: ") + sim.scenario.title(), sim.scenario.reason)
 		return
 	screens.open("results", {"won": won, "stars": sim.scenario.stars, "achievements": fresh,
-		"chain": PackedStringArray() if won else _failure_chain()})
+		"chain": PackedStringArray() if won else _failure_chain(), "run": run})
 
 
 ## The cause chain behind the most recent population/food/water crisis.

@@ -10,6 +10,7 @@ enum Status { RUNNING, WON, FAILED }
 const TUTORIAL_ID := "living_island"
 const V1_TUTORIAL_ID := "feed_the_village"
 const TUTORIAL_SEED := 12345
+const MEDAL_NAMES := ["no medal", "bronze", "silver", "gold"]
 
 var id := TUTORIAL_ID
 var def: Dictionary = {}
@@ -17,7 +18,8 @@ var status: int = Status.RUNNING
 var ended_tick := -1
 var reason := ""
 var start_tick := 0
-var stars := 0
+var stars := 0       ## campaign/challenge: 1-3 stars. Daily/weekly/endless: medal 0-3
+var final_score := 0 ## daily/weekly/endless: score when the run ended
 var done := PackedByteArray()  ## latched objective flags
 
 
@@ -41,6 +43,25 @@ func objectives() -> Array:
 
 func is_sandbox() -> bool:
 	return def.get("kind", "") == "sandbox"
+
+
+func kind() -> String:
+	return str(def.get("kind", ""))
+
+
+## Daily / weekly / endless: scored runs with medals instead of stars.
+func is_scored() -> bool:
+	return kind() in ScenarioCatalog.MODES
+
+
+func is_endless() -> bool:
+	return kind() == "endless"
+
+
+func score(ws: WorldState) -> int:
+	if status != Status.RUNNING and is_scored():
+		return final_score
+	return ScenarioCatalog.score(def, ws, days_elapsed(ws))
 
 
 func deadline() -> int:
@@ -145,19 +166,43 @@ func evaluate(ws: WorldState) -> void:
 		stars = mini(stars, 3)
 		if ws.relaxed:
 			stars = mini(stars, 1)
+		if is_scored():
+			_score_medal(ws)
 		_end(ws, Status.WON, str(def.get("win_text", "You did it!")))
 		return
 	if ws.relaxed:
 		return
 	if ws.villagers <= int(def.get("fail_villagers", 0)):
 		_end(ws, Status.FAILED, "Too many villagers left the island.")
+	elif def.has("census") and days_elapsed(ws) > 0 and days_elapsed(ws) % int(Simulation.YEAR_LENGTH) == 0 \
+			and ws.villagers < census_target(ws):
+		_end(ws, Status.FAILED, "The year-%d census counted %d villagers; the island needed %d." % [
+			days_elapsed(ws) / int(Simulation.YEAR_LENGTH), ws.villagers, census_target(ws)])
 	elif def.has("fail_keystone") and days_elapsed(ws) > 30 and ws.keystone < float(def["fail_keystone"]):
 		_end(ws, Status.FAILED, "The island's health collapsed below %d." % int(def["fail_keystone"]))
 	elif deadline() > 0 and days_elapsed(ws) >= deadline():
 		_end(ws, Status.FAILED, "Day %d came before every goal was met." % deadline())
 
 
+## Endless: villagers required at the next year-end census.
+func census_target(ws: WorldState) -> int:
+	var c: Array = def.get("census", [])
+	if c.size() < 3:
+		return 0
+	var year := maxi((days_elapsed(ws) - 1) / int(Simulation.YEAR_LENGTH), 0)
+	return mini(int(c[0]) + int(c[1]) * year, int(c[2]))
+
+
+func _score_medal(ws: WorldState) -> void:
+	final_score = ScenarioCatalog.score(def, ws, days_elapsed(ws))
+	stars = 0 if ws.relaxed else ScenarioCatalog.medal_for(def, final_score)
+
+
 func _end(ws: WorldState, s: int, why: String) -> void:
+	if s == Status.FAILED and is_scored():
+		_score_medal(ws)
+		if is_endless():
+			why = "The village held on for %d days. %s" % [days_elapsed(ws), why]
 	status = s
 	ended_tick = ws.tick
 	reason = why
@@ -167,6 +212,17 @@ func _end(ws: WorldState, s: int, why: String) -> void:
 func objective_text(ws: WorldState) -> String:
 	if is_sandbox():
 		return "Sandbox - free play"
+	if is_scored():
+		var d := days_elapsed(ws)
+		match status:
+			Status.RUNNING:
+				if is_endless():
+					var left := int(Simulation.YEAR_LENGTH) - d % int(Simulation.YEAR_LENGTH)
+					return "Day %d  ·  census in %d days: %d/%d villagers  ·  score %d" % [d, left, ws.villagers,
+						census_target(ws), score(ws)]
+				return "Day %d/%d  ·  score %d" % [d, int(objectives()[0].get("target", 0)), score(ws)]
+			_:
+				return "Final score %d  ·  %s" % [final_score, MEDAL_NAMES[clampi(stars, 0, 3)]]
 	match status:
 		Status.WON:
 			return "Complete - %d of 3 stars (day %d)" % [stars, ended_tick - start_tick]
@@ -187,7 +243,7 @@ func intro_text() -> String:
 
 func to_dict() -> Dictionary:
 	return {"id": id, "status": status, "ended_tick": ended_tick, "reason": reason,
-		"start_tick": start_tick, "stars": stars, "done": Array(done)}
+		"start_tick": start_tick, "stars": stars, "done": Array(done), "score": final_score}
 
 
 static func from_dict(d: Dictionary) -> Scenario:
@@ -202,6 +258,7 @@ static func from_dict(d: Dictionary) -> Scenario:
 	s.reason = str(d.get("reason", ""))
 	s.start_tick = int(d.get("start_tick", 0))
 	s.stars = int(d.get("stars", 1 if s.status == Status.WON else 0))
+	s.final_score = int(d.get("score", 0))
 	var dn: Array = d.get("done", [])
 	for k in mini(dn.size(), s.done.size()):
 		s.done[k] = 1 if int(dn[k]) != 0 else 0

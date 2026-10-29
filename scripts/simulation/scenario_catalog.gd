@@ -136,7 +136,145 @@ static func get_def(id: String) -> Dictionary:
 	for d in all():
 		if d["id"] == id:
 			return d
+	if id.begins_with("daily_") or id.begins_with("weekly_") or id.begins_with("endless_"):
+		return generated_def(id)
 	return {}
+
+
+# ------------------------------------------------------------ seeded modes (data-driven)
+## Daily / Weekly / Endless islands are not stored anywhere: the whole definition (seed, island
+## type, mutators, medals) is regenerated from the id, so a save only needs the id and every
+## player gets the same island for the same day/week. Mode settings live in data/modes.json and
+## mutators in data/mutators.json.
+
+const MODES := ["daily", "weekly", "endless"]
+const MONTHS := ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
+
+
+## Stable 31-bit FNV-1a hash (independent of engine version / platform).
+static func stable_hash(text: String) -> int:
+	var h := 2166136261
+	for b in text.to_utf8_buffer():
+		h = ((h ^ b) * 16777619) & 0xFFFFFFFF
+	return h & 0x7FFFFFFF
+
+
+static func _ymd(date: Dictionary) -> String:
+	return "%04d%02d%02d" % [int(date["year"]), int(date["month"]), int(date["day"])]
+
+
+## Id of the daily island for a local date dict (defaults to today).
+static func daily_id(date: Dictionary = {}) -> String:
+	if date.is_empty():
+		date = Time.get_date_dict_from_system()
+	return "daily_" + _ymd(date)
+
+
+## Id of the weekly expedition: keyed by the Monday that starts the week.
+static func weekly_id(date: Dictionary = {}) -> String:
+	if date.is_empty():
+		date = Time.get_date_dict_from_system()
+	var unix := Time.get_unix_time_from_datetime_dict({"year": date["year"], "month": date["month"],
+		"day": date["day"], "hour": 12, "minute": 0, "second": 0})
+	var wd := int(Time.get_date_dict_from_unix_time(unix)["weekday"]) # 0 = Sunday
+	var back := (wd + 6) % 7
+	return "weekly_" + _ymd(Time.get_date_dict_from_unix_time(unix - back * 86400))
+
+
+static func endless_id(world_seed: int) -> String:
+	return "endless_%d" % absi(world_seed)
+
+
+static func mode_of(id: String) -> String:
+	for m in MODES:
+		if id.begins_with(m + "_"):
+			return m
+	return ""
+
+
+static func _pretty_date(ymd: String) -> String:
+	if ymd.length() != 8 or not ymd.is_valid_int():
+		return ymd
+	var mo := clampi(int(ymd.substr(4, 2)), 1, 12)
+	return "%d %s %s" % [int(ymd.substr(6, 2)), MONTHS[mo - 1], ymd.substr(0, 4)]
+
+
+## Picks `count` distinct mutators with a seeded RNG (deterministic for a given seed).
+static func pick_mutators(world_seed: int, count: int) -> Array:
+	var pool: Array = []
+	for m in ContentDB.mutators():
+		pool.append(str(m["id"]))
+	var rng := RandomNumberGenerator.new()
+	rng.seed = world_seed * 7919 + 17
+	var out: Array = []
+	while out.size() < count and not pool.is_empty():
+		out.append(pool.pop_at(rng.randi_range(0, pool.size() - 1)))
+	return out
+
+
+static func generated_def(id: String) -> Dictionary:
+	var mode := mode_of(id)
+	var md := ContentDB.mode(mode)
+	var key := id.substr(mode.length() + 1)
+	if mode == "" or md.is_empty() or key == "" or not key.is_valid_int():
+		return {}
+	var world_seed := int(key) if mode == "endless" else stable_hash(id)
+	var muts: Array = [] if mode == "endless" else pick_mutators(world_seed, int(md.get("mutators", 0)))
+	var mult := 1.0
+	for mid in muts:
+		mult *= float(ContentDB.mutator(mid).get("score_mult", 1.0))
+	var d := {
+		"id": id, "kind": mode, "index": 0, "seed": world_seed, "size": int(md.get("size", 32)),
+		"preset": world_seed % 4, "mutators": muts, "score_mult": snappedf(mult, 0.01),
+		"medals": md.get("medals", [1, 2, 3]), "fail_villagers": int(md.get("fail_villagers", 5)),
+		"rare_events": true, "escalate": bool(md.get("escalate", false)), "deadline": 0,
+	}
+	match mode:
+		"daily":
+			d["title"] = "%s · %s" % [md.get("title", "Daily Island"), _pretty_date(key)]
+		"weekly":
+			d["title"] = "%s · week of %s" % [md.get("title", "Weekly Expedition"), _pretty_date(key)]
+		"endless":
+			d["title"] = "%s · island %d" % [md.get("title", "Endless"), world_seed]
+	if mode == "endless":
+		d["objectives"] = []
+		d["census"] = [int(md.get("census_start", 6)), int(md.get("census_step", 1)), int(md.get("census_max", 20))]
+		d["blurb"] = "No last day. Every year the weather grows harsher and the census asks for a bigger village."
+		d["intro"] = d["blurb"] + "\n\nAt the end of each year (120 days) the village must count at least %d villagers, then one more each year. Rare events and new species can appear; your score grows with every day survived." % int(md.get("census_start", 6))
+		d["win_text"] = ""
+	else:
+		var days := int(md.get("days", 240))
+		d["objectives"] = [{"kind": "survive", "target": days}]
+		d["blurb"] = "Same island for everyone %s. Last %d days and score as high as you can." % [
+			"today" if mode == "daily" else "this week", days]
+		d["intro"] = d["blurb"] + "\n\nMutators: %s.\nRare events and new species can appear." % ", ".join(
+			muts.map(func(m): return str(ContentDB.mutator(m).get("title", m))))
+		d["win_text"] = "You saw the island through %d days." % days
+	return d
+
+
+## Score for a seeded-mode run (or any run): weights from data/modes.json x mutator multiplier.
+static func score(d: Dictionary, ws: WorldState, days: int) -> int:
+	var w: Dictionary = ContentDB.file("modes").get("score", {})
+	var species := 0
+	var b := ws.species_seen
+	while b > 0:
+		species += b & 1
+		b >>= 1
+	var raw := float(w.get("per_day", 1.0)) * days + float(w.get("keystone", 0.0)) * ws.keystone \
+		+ float(w.get("peak_villagers", 0.0)) * ws.peak_villagers + float(w.get("harvests", 0.0)) * ws.harvests \
+		+ float(w.get("species", 0.0)) * species + float(w.get("rare_survived", 0.0)) * ws.rare_hits \
+		+ float(w.get("villagers_lost", 0.0)) * ws.villagers_lost
+	return maxi(int(round(raw * float(d.get("score_mult", 1.0)))), 0)
+
+
+## 0 = none, 1 bronze, 2 silver, 3 gold.
+static func medal_for(d: Dictionary, points: int) -> int:
+	var m := 0
+	for t in d.get("medals", []):
+		if points >= int(t):
+			m += 1
+	return m
 
 
 ## Campaign entry n is unlocked once n-1 is won; challenges unlock after campaign 2.
@@ -151,6 +289,8 @@ static func is_unlocked(id: String, progress: Dictionary) -> bool:
 			return idx == 1 or int(stars.get(CAMPAIGN[idx - 2]["id"], 0)) > 0
 		"challenge":
 			return int(stars.get(CAMPAIGN[1]["id"], 0)) > 0
+		"daily", "weekly", "endless":
+			return int(stars.get(CAMPAIGN[0]["id"], 0)) > 0
 	return true
 
 
@@ -175,14 +315,45 @@ static func create_sim(d: Dictionary, options: Dictionary = {}) -> Simulation:
 	ws.tick = int(setup.get("start_tick", 0))
 	ws.relaxed = bool(options.get("relaxed", false))
 	ws.free_build = bool(options.get("free_build", false))
-	ws.peak_villagers = ws.villagers
 	var degrade := float(setup.get("degrade", 0.0))
+	for mid in d.get("mutators", []):
+		degrade = _apply_mutator(ws, ContentDB.mutator(str(mid)), degrade)
+	ws.rare_events = bool(d.get("rare_events", false)) or bool(options.get("rare_events", false))
+	ws.escalate = bool(d.get("escalate", false))
+	ws.peak_villagers = ws.villagers
 	if degrade > 0.0:
 		_degrade(sim, degrade)
 	sim.scenario = Scenario.from_def(d)
 	sim.scenario.start_tick = ws.tick
 	sim.update_derived()
 	return sim
+
+
+const _MUT_FIELDS := {"food": "food_store", "wood": "wood", "labor": "labor", "fish": "fish",
+	"goats": "goats", "villagers": "villagers", "climate_rain": "climate_rain",
+	"climate_storm": "climate_storm", "climate_fire": "climate_fire"}
+
+
+## Applies a mutator's mul / add / set to the starting state. Returns the (possibly new) degrade.
+static func _apply_mutator(ws: WorldState, m: Dictionary, degrade: float) -> float:
+	for sect in ["mul", "add", "set"]:
+		var ops: Dictionary = m.get(sect, {})
+		for k in ops:
+			var v := float(ops[k])
+			if k == "degrade":
+				degrade = v if sect == "set" else (degrade * v if sect == "mul" else degrade + v)
+				continue
+			if not _MUT_FIELDS.has(k):
+				continue
+			var f: String = _MUT_FIELDS[k]
+			var cur := float(ws.get(f))
+			var nv := cur * v if sect == "mul" else (cur + v if sect == "add" else v)
+			nv = maxf(nv, 0.0)
+			if f == "villagers":
+				ws.villagers = maxi(int(round(nv)), 1)
+			else:
+				ws.set(f, nv)
+	return degrade
 
 
 ## Pre-game logging: clears a fraction of forest (and thins soil) and records it as one
