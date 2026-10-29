@@ -2,8 +2,9 @@ class_name SaveSystem
 extends RefCounted
 ## Versioned local JSON saves with atomic writes and a backup.
 ##
-## Format (version 2; version 1 files are migrated on load - see from_dict):
-##   { version, saved_at (unix s), meta{...}, world{width,height,seed,arrays{name: base64},
+## Format (version 3; version 1 and 2 files are migrated on load - see from_dict):
+##   { version, saved_at (unix s), save{id, created_at, revision, app_version, content_version,
+##     platform}, meta{...}, world{width,height,seed,arrays{name: base64},
 ##     scalars{name: value}}, events{...EventLog.to_dict()}, rng{seed,state} (strings, 64-bit safe),
 ##     scenario{...} | null }
 ## Arrays are raw little-endian bytes and float scalars raw float64 bytes → exact round-trip.
@@ -12,7 +13,8 @@ extends RefCounted
 ## <path>.tmp renamed to <path>. A crash at any point leaves either the old save, the backup,
 ## or the new save intact. load_game() falls back to the .bak if the main file is missing/corrupt.
 
-const VERSION := 2
+const VERSION := 3
+const CONTENT_VERSION := 1   ## bump when data/*.json changes meaning for existing saves
 const SAVE_DIR := "user://saves"
 const DEFAULT_PATH := "user://saves/autosave.json"
 const V1_PATH := "user://keystone_save.json"   ## where version 1 kept its single save
@@ -65,15 +67,52 @@ static func to_dict(sim: Simulation, meta: Dictionary = {}) -> Dictionary:
 		# Godot's JSON parser can lose the last bit of a double, so floats are stored as raw
 		# float64 bytes (base64) to keep loads bit-exact (determinism after load is tested).
 		scalars[f] = Marshalls.raw_to_base64(PackedFloat64Array([v]).to_byte_array()) if v is float else v
+	var saved_at: float = float(meta.get("saved_at", Time.get_unix_time_from_system()))
 	return {
 		"version": VERSION,
-		"saved_at": meta.get("saved_at", Time.get_unix_time_from_system()),
+		"saved_at": saved_at,
+		"save": stamp(sim, saved_at),
 		"meta": meta,
 		"world": {"width": ws.width, "height": ws.height, "seed": ws.world_seed, "arrays": arrays, "scalars": scalars},
 		"events": sim.events.to_dict(),
 		"rng": {"seed": str(sim.rng.seed), "state": str(sim.rng.state)},
 		"scenario": sim.scenario.to_dict() if sim.scenario != null else null,
 	}
+
+
+## Unique id for a new save lineage (128 random bits, hex).
+static func new_save_id() -> String:
+	return Crypto.new().generate_random_bytes(16).hex_encode()
+
+
+## Save identity block; bumps the revision on every write. A lineage keeps its id across
+## slots and devices, so a future cloud sync can tell "same game, newer" from "different game".
+static func stamp(sim: Simulation, saved_at: float) -> Dictionary:
+	var si := sim.save_info
+	if str(si.get("id", "")) == "":
+		si["id"] = new_save_id()
+		si["created_at"] = saved_at
+		si["revision"] = 0
+	si["revision"] = int(si.get("revision", 0)) + 1
+	return {"id": si["id"], "created_at": float(si.get("created_at", saved_at)), "revision": si["revision"],
+		"app_version": str(ProjectSettings.get_setting("application/config/version", "0")),
+		"content_version": CONTENT_VERSION, "platform": OS.get_name()}
+
+
+## Conflict rule for two copies of a save (e.g. local vs. cloud). Same lineage: higher revision
+## wins, ties go to the later saved_at. Different lineages: the later saved_at wins and the
+## caller should offer to keep the other as a separate slot. Returns the winning dictionary.
+static func resolve_conflict(a: Dictionary, b: Dictionary) -> Dictionary:
+	if a.is_empty():
+		return b
+	if b.is_empty():
+		return a
+	var sa: Dictionary = a.get("save", {})
+	var sb: Dictionary = b.get("save", {})
+	if str(sa.get("id", "")) != "" and sa.get("id") == sb.get("id"):
+		if int(sa.get("revision", 0)) != int(sb.get("revision", 0)):
+			return a if int(sa.get("revision", 0)) > int(sb.get("revision", 0)) else b
+	return a if float(a.get("saved_at", 0.0)) >= float(b.get("saved_at", 0.0)) else b
 
 
 ## Rebuilds a Simulation from a save dictionary; null if invalid or from a newer version.
@@ -111,6 +150,9 @@ static func from_dict(d: Dictionary) -> Simulation:
 			if ver == 1 and WorldState.V2_SCALAR_DEFAULTS.has(f):
 				ws.set(f, WorldState.V2_SCALAR_DEFAULTS[f])
 				continue
+			if ver <= 2 and WorldState.V3_SCALAR_DEFAULTS.has(f):
+				ws.set(f, WorldState.V3_SCALAR_DEFAULTS[f])
+				continue
 			return null
 		var cur: Variant = ws.get(f)
 		match typeof(cur):
@@ -134,6 +176,12 @@ static func from_dict(d: Dictionary) -> Simulation:
 		sim.scenario = Scenario.from_dict(sc)
 	if ver == 1:
 		ws.peak_villagers = ws.villagers
+	var sv = d.get("save")
+	if sv is Dictionary and str(sv.get("id", "")) != "":
+		sim.save_info = {"id": str(sv["id"]), "created_at": float(sv.get("created_at", 0.0)),
+			"revision": int(sv.get("revision", 0))}
+	else: # v1/v2: start a lineage now, dated from the old save
+		sim.save_info = {"id": new_save_id(), "created_at": float(d.get("saved_at", 0.0)), "revision": 0}
 	sim.update_derived()
 	return sim
 
@@ -223,4 +271,6 @@ static func slot_info(path: String) -> Dictionary:
 		"keystone": int(meta.get("keystone", 0)),
 		"size": int(wd.get("width", 0)),
 		"version": int(d.get("version", 0)),
+		"save_id": str(d.get("save", {}).get("id", "")) if d.get("save") is Dictionary else "",
+		"revision": int(d.get("save", {}).get("revision", 0)) if d.get("save") is Dictionary else 0,
 	}

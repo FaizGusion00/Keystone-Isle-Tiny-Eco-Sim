@@ -46,6 +46,8 @@ const SCALAR_FIELDS := [
 	"houses_built", "dams_built", "trees_planted", "land_restored", "fires", "floods",
 	"villagers_lost", "peak_villagers", "keystone", "k_plants", "k_soil", "k_water", "k_fish",
 	"k_wildlife", "k_village", "housing_event", "fire_burned",
+	# --- v3: rare events, species, endless escalation ---
+	"rare_events", "escalate", "species", "species_seen", "rare_event", "rare_hits",
 ]
 
 ## Scalars added after save version 1, with their defaults for migrated saves.
@@ -57,6 +59,11 @@ const V2_SCALAR_DEFAULTS := {
 	"fires": 0, "floods": 0, "villagers_lost": 0, "peak_villagers": 0, "keystone": 0.0,
 	"k_plants": 0.0, "k_soil": 0.0, "k_water": 0.0, "k_fish": 0.0, "k_wildlife": 0.0,
 	"k_village": 0.0, "housing_event": -1, "fire_burned": 0,
+}
+
+## Scalars added in save version 3, with their defaults for migrated v1/v2 saves.
+const V3_SCALAR_DEFAULTS := {
+	"rare_events": false, "escalate": false, "species": 0, "species_seen": 0, "rare_event": -1, "rare_hits": 0,
 }
 
 var width: int = 0
@@ -144,6 +151,13 @@ var k_wildlife: float = 0.0
 var k_village: float = 0.0
 var housing_event: int = -1        ## active HOUSING_FULL
 var fire_burned: int = 0           ## tiles burned by the current fire
+# --- v3 ---
+var rare_events: bool = false      ## rare events + species on (daily/weekly/endless/sandbox opt-in)
+var escalate: bool = false         ## endless: storms & fires grow fiercer every year
+var species: int = 0               ## bitmask of species living on the island now
+var species_seen: int = 0          ## bitmask of species that have ever lived here this run
+var rare_event: int = -1           ## latest rare event (locusts / bloom / king tide)
+var rare_hits: int = 0             ## rare events weathered this run
 
 
 func _init(w: int = 32, h: int = 32, s: int = 0) -> void:

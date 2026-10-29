@@ -17,6 +17,8 @@ enum Type {
 	LAND_CLEARED, HOUSE_BUILT, DAM_BUILT, LAND_RESTORED, STRUCTURE_REMOVED, # player actions
 	DRY_SEASON, WET_SEASON,                            # seasons (roots)
 	WILDFIRE, FIRE_OUT, FLOOD, HOUSING_FULL, HARVEST_LOST,
+	# --- v3: rare events & species (only when WorldState.rare_events is on) ---
+	LOCUSTS, ALGAL_BLOOM, KING_TIDE, SPECIES_ARRIVED, SPECIES_LEFT,
 }
 
 const TYPE_NAMES := {
@@ -49,7 +51,15 @@ const TYPE_NAMES := {
 	Type.FLOOD: "Flood",
 	Type.HOUSING_FULL: "Village out of homes",
 	Type.HARVEST_LOST: "Harvest lost",
+	Type.LOCUSTS: "Locust swarm",
+	Type.ALGAL_BLOOM: "Algal bloom",
+	Type.KING_TIDE: "King tide",
+	Type.SPECIES_ARRIVED: "New species",
+	Type.SPECIES_LEFT: "Species left",
 }
+
+## Species names by bit (value of SPECIES_ARRIVED / SPECIES_LEFT); mirrors data/species.json.
+const SPECIES_NAMES := {1: "Wild bees", 2: "Seabirds", 4: "Tree frogs", 8: "Island wolves"}
 
 ## Types that start a causal chain by definition (player actions, weather, recoveries).
 const ROOT_KIND := {
@@ -68,6 +78,8 @@ const ROOT_KIND := {
 	Type.DRY_SEASON: "the turning of the seasons",
 	Type.WET_SEASON: "the turning of the seasons",
 	Type.HOUSING_FULL: "every home being full - build houses",
+	Type.KING_TIDE: "the sea (a rare surge)",
+	Type.SPECIES_ARRIVED: "a healthy habitat",
 }
 
 ## Category of each type, used by the UI for icons/colours and history filters.
@@ -84,13 +96,16 @@ const TYPE_KIND := {
 	Type.FOOD_SHORTAGE: Kind.VILLAGE, Type.WATER_SHORTAGE: Kind.VILLAGE,
 	Type.POPULATION_GROWTH: Kind.VILLAGE, Type.POPULATION_LOSS: Kind.VILLAGE, Type.HOUSING_FULL: Kind.VILLAGE,
 	Type.WILDFIRE: Kind.HAZARD, Type.FIRE_OUT: Kind.HAZARD, Type.FLOOD: Kind.HAZARD,
+	Type.LOCUSTS: Kind.HAZARD, Type.ALGAL_BLOOM: Kind.HAZARD, Type.KING_TIDE: Kind.HAZARD,
+	Type.SPECIES_ARRIVED: Kind.LIFE, Type.SPECIES_LEFT: Kind.LIFE,
 }
 
 ## Events worth a toast when they happen (bad news and milestones; not routine actions).
 const NOTABLE := [Type.HEAVY_RAIN, Type.DROUGHT, Type.DROUGHT_ENDED, Type.DRY_SEASON, Type.WET_SEASON,
 	Type.MUDDY_WATER, Type.WATER_CLEARED, Type.FISH_DECLINE, Type.HERBIVORE_DECLINE, Type.CROP_FAILURE,
 	Type.FOOD_SHORTAGE, Type.WATER_SHORTAGE, Type.POPULATION_GROWTH, Type.POPULATION_LOSS,
-	Type.WILDFIRE, Type.FIRE_OUT, Type.FLOOD, Type.HOUSING_FULL, Type.HARVEST_LOST]
+	Type.WILDFIRE, Type.FIRE_OUT, Type.FLOOD, Type.HOUSING_FULL, Type.HARVEST_LOST,
+	Type.LOCUSTS, Type.ALGAL_BLOOM, Type.KING_TIDE, Type.SPECIES_ARRIVED, Type.SPECIES_LEFT]
 
 
 static func kind_of_type(t: int) -> int:
@@ -100,7 +115,8 @@ static func kind_of_type(t: int) -> int:
 static func is_bad(t: int) -> bool:
 	return t in [Type.DROUGHT, Type.EROSION, Type.MUDDY_WATER, Type.FISH_DECLINE, Type.HERBIVORE_DECLINE,
 		Type.CROP_FAILURE, Type.FOOD_SHORTAGE, Type.WATER_SHORTAGE, Type.POPULATION_LOSS, Type.WILDFIRE,
-		Type.FLOOD, Type.HOUSING_FULL, Type.HARVEST_LOST]
+		Type.FLOOD, Type.HOUSING_FULL, Type.HARVEST_LOST, Type.LOCUSTS, Type.ALGAL_BLOOM, Type.KING_TIDE,
+		Type.SPECIES_LEFT]
 
 const CAPACITY := 512
 const MAX_CAUSES := 3
@@ -221,6 +237,11 @@ func describe(id: int) -> String:
 			if v > 0.0:
 				s += " (+%d wood)" % int(v)
 		Type.HOUSING_FULL: s += " (all %d places taken)" % int(v)
+		Type.LOCUSTS: s += " (%d farms stripped)" % int(v)
+		Type.ALGAL_BLOOM: s += " (fish now %d)" % int(v)
+		Type.KING_TIDE: s += " (%d tiles flooded)" % int(v)
+		Type.SPECIES_ARRIVED: s += ": %s" % SPECIES_NAMES.get(int(v), "?")
+		Type.SPECIES_LEFT: s += ": %s" % SPECIES_NAMES.get(int(v), "?")
 	return s
 
 

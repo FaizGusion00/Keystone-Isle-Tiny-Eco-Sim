@@ -1,0 +1,14 @@
+{
+  "version": 1,
+  "rare_events": [
+    {"type": "LOCUSTS", "title": "Locust swarm", "icon": "bug",
+     "text": "In dry weather a swarm can sweep over the farms and strip the crops.",
+     "counter": "Farms within two tiles of forest are spared (birds eat the locusts). Tree frogs stop swarms entirely."},
+    {"type": "ALGAL_BLOOM", "title": "Algal bloom", "icon": "waves",
+     "text": "In summer, farm runoff and muddy water feed a bloom that suffocates fish.",
+     "counter": "Keep the coast clear: forest on slopes, restore bare land, don't over-farm one valley."},
+    {"type": "KING_TIDE", "title": "King tide", "icon": "anchor",
+     "text": "A rare surge of sea water floods low coastal land in the rainy season.",
+     "counter": "Coastal forest acts like a mangrove belt: land next to forest is protected."}
+  ]
+}

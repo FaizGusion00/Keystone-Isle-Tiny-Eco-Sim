@@ -1,0 +1,17 @@
+{
+  "version": 1,
+  "species": [
+    {"id": "bees", "bit": 1, "title": "Wild bees", "icon": "bug",
+     "needs": "Forest covering at least a sixth of the island, and a farm.",
+     "effect": "Pollinate crops: farms grow 15% faster while bees are around."},
+    {"id": "seabirds", "bit": 2, "title": "Seabirds", "icon": "bird",
+     "needs": "70+ fish and clear coastal water.",
+     "effect": "Villagers gather eggs: a little extra food every day."},
+    {"id": "frogs", "bit": 4, "title": "Tree frogs", "icon": "droplets",
+     "needs": "Standing fresh water - ponds, wet lowland or a dam reservoir.",
+     "effect": "Eat insects: locust swarms cannot take hold while frogs are present."},
+    {"id": "wolves", "bit": 8, "title": "Island wolves", "icon": "skull",
+     "needs": "A large wild goat herd (22+) and a quarter of the island forested.",
+     "effect": "Hunt goats, keeping the herd from overgrazing the pasture."}
+  ]
+}

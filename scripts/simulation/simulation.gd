@@ -134,6 +134,8 @@ var rng := RandomNumberGenerator.new()
 var events := EventLog.new()
 var fish_capacity := FISH_CAP  ## derived each tick (not saved)
 var scenario: Scenario = null  ## optional goal, evaluated after every tick (saved)
+## Save identity (v3): {id, created_at, revision}. Not simulation state: never in checksums.
+var save_info := {}
 
 var _water_next := PackedFloat32Array()
 var _sed_next := PackedFloat32Array()
@@ -301,6 +303,10 @@ func step() -> void:
 	_floods()
 	_crops()
 	_wildlife()
+	if world.rare_events:
+		_rare()
+	if world.escalate and world.tick % int(YEAR_LENGTH) == 0:
+		_escalate()
 	_settlement()
 	_keystone()
 	if scenario != null:
@@ -593,6 +599,7 @@ func _crops() -> void:
 	var soil := world.soil_depth
 	var veg := world.vegetation_cover
 	var w := world.width
+	var pollination := BEE_POLLINATION if (world.species & SP_BEES) != 0 else 1.0
 	for i in st.size():
 		if st[i] != WorldState.Structure.FARM:
 			continue
@@ -608,7 +615,7 @@ func _crops() -> void:
 				world.last_event[i] = id
 		else:
 			stress[i] = 0
-		var c := crop[i] + (1.0 / CROP_DAYS) * clampf((m - CROP_DRY) / 0.25, 0.0, 1.0) * sf
+		var c := crop[i] + (1.0 / CROP_DAYS) * clampf((m - CROP_DRY) / 0.25, 0.0, 1.0) * sf * pollination
 		if c >= 1.0:
 			world.food_store = minf(world.food_store + HARVEST_FOOD * sf, FOOD_STORE_MAX)
 			soil[i] = maxf(soil[i] - HARVEST_SOIL_COST, 0.0)
@@ -636,6 +643,8 @@ func _wildlife() -> void:
 	var g := world.goats
 	var gcap := maxf(pasture * GOAT_PER_VEG, 0.001)
 	world.goats = maxf(g + GOAT_GROWTH * g * (1.0 - g / gcap), 0.0)
+	if (world.species & SP_WOLVES) != 0:
+		world.goats *= 1.0 - WOLF_PREDATION
 	if pasture > 0.0 and g > 0.0:
 		var eaten := minf(g * GRAZE / pasture, 0.5)
 		for i in veg.size():
@@ -753,6 +762,158 @@ func _population(tick: int) -> void:
 		world.villagers += add
 		world.growth_event = events.record(tick, EventLog.Type.POPULATION_GROWTH, c.x, c.y, world.villagers)
 		world.last_event[si] = world.growth_event
+
+
+# ---------------------------------------------------------------- rare events & species (v3)
+
+const SP_BEES := 1
+const SP_SEABIRDS := 2
+const SP_FROGS := 4
+const SP_WOLVES := 8
+const BEE_POLLINATION := 1.15
+const WOLF_PREDATION := 0.004
+const SEABIRD_EGGS := 0.25          ## food per day while seabirds nest
+const SPECIES_PERIOD := 10          ## days between habitat checks
+const LOCUST_CHANCE := 0.006        ## per dry day
+const BLOOM_CHANCE := 0.012         ## per summer day with muddy, farmed coasts
+const TIDE_CHANCE := 0.004          ## per rainy-season day
+const RARE_COOLDOWN := 30           ## minimum days between rare events
+
+
+## Which species the island's habitat supports right now (pure function of state).
+func species_supported() -> int:
+	var lt := world.land_type
+	var land := 0
+	var forest := 0
+	var wet := 0
+	for i in lt.size():
+		var t := lt[i]
+		if t > LandType.BEACH:
+			land += 1
+			if t == LandType.FOREST:
+				forest += 1
+			if world.surface_water[i] > 0.02 or world.reservoir[i] > 0.05:
+				wet += 1
+	var m := 0
+	if land > 0 and forest * 6 >= land and world.count_structures(WorldState.Structure.FARM) > 0:
+		m |= SP_BEES
+	if world.fish >= 70.0 and world.coastal_turbidity < 0.03:
+		m |= SP_SEABIRDS
+	if wet >= 4:
+		m |= SP_FROGS
+	if land > 0 and world.goats >= 22.0 and forest * 4 >= land:
+		m |= SP_WOLVES
+	return m
+
+
+func _rare() -> void:
+	var tick := world.tick
+	if tick % SPECIES_PERIOD == 0:
+		var now := species_supported()
+		var c := world.coords(maxi(world.settlement_index, 0))
+		for b in [SP_BEES, SP_SEABIRDS, SP_FROGS, SP_WOLVES]:
+			if (now & b) != 0 and (world.species & b) == 0:
+				events.record(tick, EventLog.Type.SPECIES_ARRIVED, c.x, c.y, b)
+			elif (now & b) == 0 and (world.species & b) != 0:
+				events.record(tick, EventLog.Type.SPECIES_LEFT, c.x, c.y, b)
+		world.species = now
+		world.species_seen |= now
+	if (world.species & SP_SEABIRDS) != 0 and world.settlement_index >= 0:
+		world.food_store = minf(world.food_store + SEABIRD_EGGS, FOOD_STORE_MAX)
+	if events.has(world.rare_event) and tick - events.tick_of(world.rare_event) < RARE_COOLDOWN:
+		return
+	var sn := season_of(tick)
+	var roll := _chance(0, 101)
+	if (sn == Season.DRY or world.drought_event >= 0) and roll < LOCUST_CHANCE:
+		_locusts()
+	elif sn == Season.SUMMER and roll < BLOOM_CHANCE and world.coastal_turbidity > 0.025 \
+			and world.count_structures(WorldState.Structure.FARM) >= 3:
+		_algal_bloom()
+	elif sn == Season.WET and roll < TIDE_CHANCE:
+		_king_tide()
+
+
+func _forest_within(i: int, r: int) -> bool:
+	var c := world.coords(i)
+	for dy in range(-r, r + 1):
+		for dx in range(-r, r + 1):
+			var x := c.x + dx
+			var y := c.y + dy
+			if world.in_bounds(x, y) and world.land_type[world.index(x, y)] == LandType.FOREST:
+				return true
+	return false
+
+
+## Locusts strip every farm that has no forest within 2 tiles. Frogs prevent swarms.
+func _locusts() -> void:
+	if (world.species & SP_FROGS) != 0:
+		return
+	var hit := 0
+	var first := -1
+	for i in world.structure.size():
+		if world.structure[i] == WorldState.Structure.FARM and world.crop_growth[i] > 0.05 and not _forest_within(i, 2):
+			world.crop_growth[i] = 0.0
+			hit += 1
+			if first < 0:
+				first = i
+	if hit == 0:
+		return
+	var c := world.coords(first)
+	var dr := world.drought_event if world.drought_event >= 0 else world.season_event
+	world.rare_event = events.record(world.tick, EventLog.Type.LOCUSTS, c.x, c.y, hit, dr)
+	world.rare_hits += 1
+	for i in world.structure.size():
+		if world.structure[i] == WorldState.Structure.FARM and world.crop_growth[i] == 0.0:
+			world.last_event[i] = world.rare_event
+
+
+## Farm runoff + muddy water: a bloom kills a third of the fish.
+func _algal_bloom() -> void:
+	world.fish *= 0.65
+	var sea := _muddiest_shallow()
+	var c := world.coords(sea) if sea >= 0 else Vector2i(-1, -1)
+	var mud := world.muddy_event if world.coast_muddy else -1
+	world.rare_event = events.record(world.tick, EventLog.Type.ALGAL_BLOOM, c.x, c.y, world.fish, mud)
+	world.rare_hits += 1
+
+
+## Sea surge over low coastal tiles without forest next to them.
+func _king_tide() -> void:
+	var w := world.width
+	var lt := world.land_type
+	var hit := 0
+	var first := -1
+	for i in lt.size():
+		var t := lt[i]
+		if t != LandType.BEACH and t != LandType.LOWLAND:
+			continue
+		var c := world.coords(i)
+		var coastal := false
+		for d in [Vector2i(1, 0), Vector2i(-1, 0), Vector2i(0, 1), Vector2i(0, -1)]:
+			var x: int = c.x + d.x
+			var y: int = c.y + d.y
+			if world.in_bounds(x, y) and LandType.is_water(lt[y * w + x]):
+				coastal = true
+		if not coastal or _forest_within(i, 1):
+			continue
+		world.vegetation_cover[i] *= 0.5
+		world.soil_moisture[i] = 1.0
+		if world.structure[i] == WorldState.Structure.FARM:
+			world.crop_growth[i] = 0.0
+		hit += 1
+		if first < 0:
+			first = i
+	if hit == 0:
+		return
+	var fc := world.coords(first)
+	world.rare_event = events.record(world.tick, EventLog.Type.KING_TIDE, fc.x, fc.y, hit)
+	world.rare_hits += 1
+
+
+## Endless mode: each new year storms and fire risk grow 8% fiercer (capped).
+func _escalate() -> void:
+	world.climate_storm = minf(world.climate_storm * 1.08, 3.0)
+	world.climate_fire = minf(world.climate_fire * 1.08, 4.0)
 
 
 # ---------------------------------------------------------------- hazards (M6)

@@ -1,0 +1,12 @@
+{
+  "version": 1,
+  "score": {"per_day": 1.0, "keystone": 6.0, "peak_villagers": 12.0, "harvests": 3.0,
+            "species": 40.0, "rare_survived": 25.0, "villagers_lost": -8.0, "star": 60.0},
+  "daily": {"title": "Daily Island", "size": 32, "mutators": 2, "days": 240, "fail_villagers": 5,
+            "medals": [600, 950, 1300]},
+  "weekly": {"title": "Weekly Expedition", "size": 40, "mutators": 3, "days": 360, "fail_villagers": 5,
+             "medals": [850, 1350, 1850]},
+  "endless": {"title": "Endless", "size": 32, "fail_villagers": 4, "escalate": true,
+              "medals": [900, 1600, 2500]},
+  "xp": {"per_score": 0.2, "per_star": 40, "per_medal": 60, "level_base": 250, "prestige_level": 10}
+}

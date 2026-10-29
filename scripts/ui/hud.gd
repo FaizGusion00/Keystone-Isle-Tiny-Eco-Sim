@@ -45,6 +45,8 @@ const TYPE_ICONS := {
 	EventLog.Type.DRY_SEASON: "sun", EventLog.Type.WET_SEASON: "cloud-rain",
 	EventLog.Type.WILDFIRE: "flame", EventLog.Type.FIRE_OUT: "cloud-drizzle", EventLog.Type.FLOOD: "waves",
 	EventLog.Type.HOUSING_FULL: "home",
+	EventLog.Type.LOCUSTS: "bug", EventLog.Type.ALGAL_BLOOM: "waves", EventLog.Type.KING_TIDE: "anchor",
+	EventLog.Type.SPECIES_ARRIVED: "bird", EventLog.Type.SPECIES_LEFT: "bird",
 }
 
 

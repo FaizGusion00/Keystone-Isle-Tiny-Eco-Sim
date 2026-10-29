@@ -1,0 +1,11 @@
+{
+  "version": 1,
+  "banners": [
+    {"id": "teal", "title": "Lagoon", "color": "2f7d6d", "unlock": {}},
+    {"id": "coral", "title": "Coral", "color": "e0765a", "unlock": {"level": 3}},
+    {"id": "gold", "title": "Sunrise", "color": "e8b04a", "unlock": {"level": 6}},
+    {"id": "violet", "title": "Dusk", "color": "8a5fb0", "unlock": {"medals": 3}},
+    {"id": "ink", "title": "Deep sea", "color": "2c4a7a", "unlock": {"prestige": 1}},
+    {"id": "rose", "title": "Blossom", "color": "d35d8a", "unlock": {"species": 4}}
+  ]
+}

@@ -1,0 +1,25 @@
+{
+  "version": 1,
+  "mutators": [
+    {"id": "dry_spell", "title": "Dry spell", "icon": "sun", "blurb": "Rain is scarcer and forests burn easier.", "score_mult": 1.15,
+     "mul": {"climate_rain": 0.75, "climate_fire": 1.6}},
+    {"id": "storm_season", "title": "Storm season", "icon": "cloud-lightning", "blurb": "Wet-season storms hit much harder.", "score_mult": 1.15,
+     "mul": {"climate_storm": 1.8, "climate_rain": 1.1}},
+    {"id": "tinder", "title": "Tinderbox", "icon": "flame", "blurb": "Wildfires start twice as easily.", "score_mult": 1.1,
+     "mul": {"climate_fire": 2.0}},
+    {"id": "lean_start", "title": "Lean start", "icon": "beef", "blurb": "The settlers arrive with almost nothing stored.", "score_mult": 1.1,
+     "add": {"food": -14.0, "wood": -6.0}},
+    {"id": "plenty", "title": "Plenty", "icon": "sparkles", "blurb": "Extra timber and helping hands at the start.", "score_mult": 0.9,
+     "add": {"wood": 12.0, "labor": 6.0}},
+    {"id": "fish_boom", "title": "Fish boom", "icon": "fish", "blurb": "The reef is teeming - for now.", "score_mult": 0.95,
+     "set": {"fish": 95.0}},
+    {"id": "few_goats", "title": "Few goats", "icon": "rabbit", "blurb": "Wild goats are rare on this island.", "score_mult": 1.05,
+     "mul": {"goats": 0.35}},
+    {"id": "logged", "title": "Logged hills", "icon": "axe", "blurb": "Loggers stripped part of the forest before you came.", "score_mult": 1.2,
+     "set": {"degrade": 0.4}},
+    {"id": "crowded", "title": "Crowded boats", "icon": "ship", "blurb": "More settlers than planned - and more mouths.", "score_mult": 1.1,
+     "add": {"villagers": 4}},
+    {"id": "gentle", "title": "Gentle year", "icon": "cloud-sun", "blurb": "Mild weather all round.", "score_mult": 0.85,
+     "mul": {"climate_storm": 0.7, "climate_fire": 0.6}}
+  ]
+}
