@@ -136,6 +136,10 @@ goats / 25, village = min(food EMA, water EMA).
 ## 13. Rare events (`_rare`, only when `world.rare_events` — daily / weekly / endless and sandbox)
 - At most one per day, from a single deterministic roll `_chance(0, 101)`, and none within **30 days** of the
   previous one (`RARE_COOLDOWN`). Each hit increments `rare_hits` and is shown in the codex once seen.
+  A hit only becomes *weathered* (`rare_weathered`, the scored count) when the run is still going
+  with villagers alive exactly `RARE_COOLDOWN` (30) days later; a run that ends inside that window
+  gets nothing for the event that broke it. (Save v4; v1–v3 saves count past hits except one still
+  inside its cooldown.)
 - **Locusts** — dry season or drought, chance 0.01/day. Every farm with crop > 5 % and **no forest within 2 tiles**
   loses its crop. Caused by the drought (or dry season). Counter: forest near farms; **frogs block swarms
   entirely**. Only the stripped farms point at the event in the inspector.
@@ -162,7 +166,7 @@ Pure function of the current state; arrivals and departures are logged (`SPECIES
 - **Daily / weekly**: survive 240 / 360 days with 2 / 3 mutators drawn deterministically from the id; a mutator
   is only eligible if its `from` date ≤ the island's date, so adding content never changes existing islands.
 - **Score** (weights in `data/modes.json`): `1·days + 3·keystone + 30·(peak villagers − 10 start)
-  + 5·harvests + 30·species seen + 20·rare events weathered − 8·villagers lost`, × the product of the mutators' `score_mult`,
+  + 5·harvests + 30·species seen + 20·rare events weathered (outlasted by 30 days) − 8·villagers lost`, × the product of the mutators' `score_mult`,
   floored at 0. Medal thresholds (bronze/silver/gold): daily 850/1100/1400, weekly
   1200/1500/1900, endless 1600/2300/3000, calibrated with `tools/balance.gd` so an untouched island earns none; relaxed runs score but earn no medal. The score
   is frozen when the run ends (won or failed).

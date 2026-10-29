@@ -820,8 +820,12 @@ func _rare() -> void:
 		world.species_seen |= now
 	if (world.species & SP_SEABIRDS) != 0 and world.settlement_index >= 0:
 		world.food_store = minf(world.food_store + SEABIRD_EGGS, FOOD_STORE_MAX)
-	if events.has(world.rare_event) and tick - events.tick_of(world.rare_event) < RARE_COOLDOWN:
-		return
+	if events.has(world.rare_event):
+		var since := tick - events.tick_of(world.rare_event)
+		if since == RARE_COOLDOWN and world.villagers > 0:
+			world.rare_weathered += 1 # outlasted: only now does it count toward the score
+		if since < RARE_COOLDOWN:
+			return
 	var sn := season_of(tick)
 	var roll := _chance(0, 101)
 	if (sn == Season.DRY or world.drought_event >= 0) and roll < LOCUST_CHANCE:

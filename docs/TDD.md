@@ -68,11 +68,11 @@ static island costs ~0 per frame. Refresh runs after sim ticks / overlay changes
 `last_event` id, the active muddy-water event). Explanations walk those recorded links;
 if an event has no recorded cause, the UI says so instead of guessing.
 
-## Save / load (M5, format v3) — `SaveSystem`
+## Save / load (M5, format v4) — `SaveSystem`
 - **Files:** `user://saves/autosave.json` plus three manual slots (`slot_N.json`). The v1 single
   file `user://keystone_save.json` is moved into the autosave slot on first launch
   (`migrate_v1_file`).
-- **Format (`version: 3`):** tile arrays are base64 of the raw Packed bytes; float scalars (fish,
+- **Format (`version: 4`; v4 added `rare_weathered`):** tile arrays are base64 of the raw Packed bytes; float scalars (fish,
   goats, food store, EMA…) are base64 float64 bytes, because Godot's JSON drops the last bit of a
   double and the post-load checksum would differ; RNG seed/state are decimal strings (64-bit
   safe). Also stores the scenario, event log, `meta` (`saved_at`, clock speed, held flag, slot
@@ -80,7 +80,8 @@ if an event has no recorded cause, the UI says so instead of guessing.
   content_version, platform}` (see "Online-ready" below).
 - **Migration:** every format change bumps `VERSION`; `from_dict` accepts 1…VERSION and fills new
   fields with neutral defaults (v1 speeds are remapped, v1/v2 saves get a fresh identity with
-  revision 0, rare events off). A real v2 file is kept as a test fixture
+  revision 0, rare events off; v1–v3 derive `rare_weathered` from `rare_hits` minus a hit still inside its
+  30-day cooldown). A real v2 file is kept as a test fixture
   (`tests/fixtures/save_v2.json`) and must keep loading.
 - **Validation:** `from_dict` rejects unknown/newer versions, missing fields, malformed base64 and
   arrays whose size doesn't match `width × height`, returning `null` instead of a half-built world.
@@ -116,6 +117,14 @@ background transition could be the last thing it sees.
   catch-up on return reproduces the ticks you would have had (capped).
 - **Clock trust:** only wall-clock *differences* are used and negative elapsed time gives 0 ticks,
   so moving the device clock backwards can't rewind; forwards is bounded by the cap.
+- **Daily/weekly dates:** ids come from the local calendar date. `Progress.date_seen` keeps the
+  newest date the profile has seen (merged by max; migrated from v2 bests). Forward changes
+  (midnight, time zones, DST, a clock set ahead) simply advance it. A date more than one day
+  before `date_seen` (clock wound back, or a reset clock < 2024) is *off-clock*: the island for
+  the clock's date is still offered and playable, the Modes screen and results say so, and the
+  score is kept locally but not passed to `PlatformServices.submit_score`. A run already started
+  keeps its island id across midnight and save/load. An online build should take the date from
+  the server instead (`ScenarioCatalog.daily_id(date)` already accepts one).
 - **Debug/screenshot runs** (any user args) don't touch the save unless `--restore` is passed;
   `--away=SECONDS` simulates suspend → time passing → resume.
 - **Tests (`tests/test_save.gd`)**: save round trip, backup fallback on corruption, rejecting bad
@@ -151,10 +160,14 @@ background transition could be the last thing it sees.
   renders the landscape, portrait and 1920×1080 desktop screenshot sets under xvfb and greps each
   log for script errors and exit-time leaks.
 - **Clean exit:** every quit path (`quit_game`, desktop window close via
-  `set_auto_accept_quit(false)`) stops all audio players, drops their streams and waits a little real
-  time (0.3 s; 1 s in screenshot runs) so the mixer thread releases its Ogg playbacks before the
-  audio server shuts down. Too short a wait only produces Godot's "ObjectDB instances leaked at
-  exit" warning (seen in 3/8 loaded runs at 0.25 s, 0/8 at 1 s).
+  `set_auto_accept_quit(false)`) stops all audio players and drops their streams, then
+  `Main.drain_audio()` waits for *evidence* that the mixer released the playbacks instead of a
+  fixed delay: it polls `AudioServer.get_time_since_last_mix()` each frame (a drop proves a mix
+  pass ran), waits for two passes after the stop (pass 1 fades the stopped playbacks out, pass 2
+  marks them for deletion) and then two more frames for the main thread to free them. A 3 s guard
+  only applies if no audio thread is mixing at all (then nothing is pending). Typical drain:
+  150–280 ms under 8 parallel loaded runs, 0/8 leaks (was 3/8 with a 0.25 s timer). `--log-exit`
+  prints the drain stats; `test_exit_waits_for_the_mixer_not_a_timer` covers it.
 
 ## Seeded modes & content data (v3)
 - **Content lives in `data/*.json`** (`mutators`, `species`, `codex`, `cosmetics`, `modes`), read

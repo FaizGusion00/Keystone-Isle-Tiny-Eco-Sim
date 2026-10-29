@@ -4,12 +4,12 @@ extends RefCounted
 ## best stars per scenario, personal bests and medals per seeded island, achievements,
 ## XP / level / prestige, codex discoveries and cosmetics.
 ##
-## Version 2 (v1 files are migrated on load). Designed to be conflict-mergeable for a future
+## Version 3 (v1/v2 files are migrated on load; v3 adds date_seen for clock-change handling). Designed to be conflict-mergeable for a future
 ## cloud sync: every field merges by union or max (see merge()), and the file carries a
 ## profile_id and updated_at.
 
 const PATH := "user://progress.json"
-const VERSION := 2
+const VERSION := 3
 const MAX_BESTS := 120   ## keep the file small: oldest daily/weekly bests are pruned
 
 var stars: Dictionary = {}          ## campaign/challenge id -> best stars (0 = played, not won)
@@ -21,6 +21,7 @@ var prestige := 0
 var codex_events: Array = []        ## EventLog type names seen (rare events)
 var codex_species := 0              ## species bitmask ever seen
 var banner := "teal"                ## selected cosmetic banner
+var date_seen := ""                 ## newest local date (YYYYMMDD) this profile has seen; see observe_date()
 var profile_id := ""
 var updated_at := 0.0
 var path := PATH
@@ -69,12 +70,21 @@ func load_dict(d: Dictionary) -> void:
 	banner = str(d.get("banner", "teal"))
 	profile_id = str(d.get("profile_id", ""))
 	updated_at = float(d.get("updated_at", 0.0))
+	date_seen = str(d.get("date_seen", ""))
+	if not _valid_key(date_seen):
+		date_seen = ""
+	if int(d.get("version", 1)) < 3: # migrate: the newest daily/weekly you played is a date you saw
+		for k in bests:
+			var key := str(k).get_slice("_", 1)
+			if ScenarioCatalog.mode_of(str(k)) in ["daily", "weekly"] and _valid_key(key) and key > date_seen:
+				date_seen = key
 
 
 func to_dict() -> Dictionary:
 	return {"version": VERSION, "profile_id": profile_id, "updated_at": updated_at, "stars": stars,
 		"achievements": achievements, "games_won": games_won, "bests": bests, "xp": xp,
-		"prestige": prestige, "codex": {"events": codex_events, "species": codex_species}, "banner": banner}
+		"prestige": prestige, "codex": {"events": codex_events, "species": codex_species}, "banner": banner,
+		"date_seen": date_seen}
 
 
 func save() -> Error:
@@ -119,27 +129,41 @@ func record_result(id: String, won: bool, got_stars: int) -> bool:
 	return false
 
 
-## Records any finished run for bests and XP. Returns {xp, level_up, new_best, medal, score}.
+## Records any finished run for bests and XP. Returns {xp, level_up, new_best, medal, score, replay}.
+## XP is improvement-only, so replaying the same seeded island (or campaign map) cannot farm levels:
+## seeded runs earn per_score × (score above your best) + per_medal × (medal tiers above your best);
+## campaign/challenge maps earn per_star × (stars above your best) plus score XP on the first win only.
+## Call before record_result() (which raises the star best).
 func record_run(id: String, won: bool, got_stars: int, points: int, days: int, medal: int) -> Dictionary:
 	var xc: Dictionary = ContentDB.mode("xp")
-	var gained := int(round(float(xc.get("per_score", 0.2)) * points))
+	var per_score := float(xc.get("per_score", 0.2))
 	var scored := ScenarioCatalog.mode_of(id) != ""
+	var gained := 0
+	var replay := false
 	if scored:
-		gained += int(xc.get("per_medal", 60)) * medal
+		var prev := best(id)
+		replay = not prev.is_empty()
+		gained = int(round(per_score * maxi(points - int(prev.get("score", 0)), 0)))
+		gained += int(xc.get("per_medal", 60)) * maxi(medal - int(prev.get("medal", 0)), 0)
 	elif won:
-		gained += int(xc.get("per_star", 40)) * got_stars
+		var prev_stars := best_stars(id)
+		replay = prev_stars > 0
+		gained = int(xc.get("per_star", 40)) * maxi(got_stars - prev_stars, 0)
+		if not replay:
+			gained += int(round(per_score * points))
 	gained = int(round(gained * (1.0 + 0.1 * prestige)))
 	var before := level()
 	xp += gained
 	var new_best := false
 	if scored:
 		var b := best(id)
-		if b.is_empty() or points > int(b.get("score", 0)):
-			bests[id] = {"score": points, "days": days, "medal": maxi(medal, int(b.get("medal", 0))),
-				"at": Time.get_unix_time_from_system()}
-			new_best = true
+		if b.is_empty() or points > int(b.get("score", 0)) or medal > int(b.get("medal", 0)):
+			bests[id] = {"score": maxi(points, int(b.get("score", 0))), "days": days if points >= int(b.get("score", 0)) else int(b.get("days", days)),
+				"medal": maxi(medal, int(b.get("medal", 0))), "at": Time.get_unix_time_from_system()}
+			new_best = points > int(b.get("score", 0)) or b.is_empty()
 		_prune_bests()
-	return {"xp": gained, "level_up": level() > before, "new_best": new_best, "medal": medal, "score": points}
+	return {"xp": gained, "level_up": level() > before, "new_best": new_best, "medal": medal, "score": points,
+		"replay": replay}
 
 
 func _prune_bests() -> void:
@@ -264,10 +288,43 @@ func merge(o: Progress) -> void:
 		if not codex_events.has(e):
 			codex_events.append(e)
 	codex_species |= o.codex_species
+	if o.date_seen > date_seen:
+		date_seen = o.date_seen
 	if o.updated_at > updated_at:
 		banner = o.banner
 		updated_at = o.updated_at
 	_prune_bests()
+
+
+## Daily/weekly islands follow the device's local calendar date (no network time). Call with
+## today's date key: moving forward (normal days, time zones, DST, a clock set ahead) just
+## advances date_seen. A date earlier than one already seen means the clock went back: the
+## island for the clock's date is still offered (nobody is locked out), but this returns true
+## (beyond one day of slack) so the run is marked off-clock and its score is not submitted to any leaderboard.
+## Garbage dates (e.g. a reset clock reading 1970) also count as off-clock.
+func observe_date(key: String) -> bool:
+	if not _valid_key(key) or key < "20240101":
+		return true
+	if key >= date_seen:
+		date_seen = key
+		return false
+	# one day of slack: flying west across the date line can legitimately step back a day
+	return _unix(date_seen) - _unix(key) > 86400
+
+
+static func _unix(k: String) -> int:
+	return Time.get_unix_time_from_datetime_dict({"year": int(k.substr(0, 4)), "month": int(k.substr(4, 2)),
+		"day": int(k.substr(6, 2)), "hour": 12, "minute": 0, "second": 0})
+
+
+static func _valid_key(k: String) -> bool:
+	return k.length() == 8 and k.is_valid_int()
+
+
+static func date_key(date: Dictionary = {}) -> String:
+	if date.is_empty():
+		date = Time.get_date_dict_from_system()
+	return "%04d%02d%02d" % [int(date["year"]), int(date["month"]), int(date["day"])]
 
 
 ## Adds newly earned achievements; returns the ids that were new.

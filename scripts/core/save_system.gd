@@ -13,7 +13,7 @@ extends RefCounted
 ## <path>.tmp renamed to <path>. A crash at any point leaves either the old save, the backup,
 ## or the new save intact. load_game() falls back to the .bak if the main file is missing/corrupt.
 
-const VERSION := 3
+const VERSION := 4
 const CONTENT_VERSION := 1   ## bump when data/*.json changes meaning for existing saves
 const SAVE_DIR := "user://saves"
 const DEFAULT_PATH := "user://saves/autosave.json"
@@ -153,6 +153,9 @@ static func from_dict(d: Dictionary) -> Simulation:
 			if ver <= 2 and WorldState.V3_SCALAR_DEFAULTS.has(f):
 				ws.set(f, WorldState.V3_SCALAR_DEFAULTS[f])
 				continue
+			if ver <= 3 and WorldState.V4_SCALAR_DEFAULTS.has(f):
+				ws.set(f, WorldState.V4_SCALAR_DEFAULTS[f])
+				continue
 			return null
 		var cur: Variant = ws.get(f)
 		match typeof(cur):
@@ -176,6 +179,9 @@ static func from_dict(d: Dictionary) -> Simulation:
 		sim.scenario = Scenario.from_dict(sc)
 	if ver == 1:
 		ws.peak_villagers = ws.villagers
+	if ver <= 3: # v4: every past hit counts as weathered except one still inside its cooldown
+		var fresh := el.has(ws.rare_event) and ws.tick - el.tick_of(ws.rare_event) < Simulation.RARE_COOLDOWN
+		ws.rare_weathered = maxi(ws.rare_hits - (1 if fresh else 0), 0)
 	var sv = d.get("save")
 	if sv is Dictionary and str(sv.get("id", "")) != "":
 		sim.save_info = {"id": str(sv["id"]), "created_at": float(sv.get("created_at", 0.0)),

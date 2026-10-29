@@ -312,3 +312,21 @@ func test_touch_targets_and_text_size_floor() -> void:
 	_a11y_walk(main.hud, hud_out)
 	assert_eq(hud_out, [], "hud")
 	_free(main)
+
+
+func test_exit_waits_for_the_mixer_not_a_timer() -> void:
+	var main = _main()
+	if AudioDirector.current != null:
+		AudioDirector.current.shutdown()
+	await main.drain_audio(3000)
+	var st: Dictionary = main.drain_stats
+	assert_true(st.has("mixes") and st.has("ms"))
+	if AudioServer.get_mix_rate() > 0 and int(st["mixes"]) > 0:
+		assert_true(int(st["mixes"]) >= 2, "two mixer passes observed: %s" % st)
+		assert_false(bool(st["guard_hit"]), "drained by mixer progress, not the guard: %s" % st)
+	else:
+		print("    [exit] no audio thread mixing here; guard path only: ", st)
+	for p in ([] if AudioDirector.current == null else AudioDirector.current.find_children("*", "AudioStreamPlayer", true, false)):
+		assert_false((p as AudioStreamPlayer).playing, "every player stopped")
+		assert_true((p as AudioStreamPlayer).stream == null, "every stream dropped")
+	_free(main)

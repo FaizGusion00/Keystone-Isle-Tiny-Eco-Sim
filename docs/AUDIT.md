@@ -33,18 +33,14 @@ not re-run against the old code for this document. Run the suite with
 | 12 | Content data | A mutator, species or rare event could reference an icon that does not exist (blank button). | `ContentDB.validate` checks icons exist in `assets/icons`. | `test_content_files_validate` |
 | 13 | Exit | Godot reported leaked Ogg playback instances at quit (intermittent, worse under load). | All quit paths go through `quit_game()`: stop audio, wait one frame plus a real-time settle (0.3 s; 1 s for screenshot runs), then quit. Window close is intercepted. | screenshot pipeline greps logs for leaks |
 | 14 | Balance | Seeded-mode scores were dominated by passive terms (starting villagers, island health): an untouched island earned bronze on 9/12 dailies and silver on 2/12, and a scripted steward barely beat it. | Score rewards village *growth* over the start (30/villager), harvests 5, keystone 3; medals recalibrated with `tools/balance.gd` (idle: 0 medals in 30 runs; steward: mostly bronze/silver). | `test_scores_and_medals` (an idle island earns no medal) |
+| 15 | Progression | XP was granted for every completed run, so replaying one seeded island farmed levels. | Improvement-only XP: score XP for points above your best on that id, medal XP for new tiers, campaign star XP for new stars and score XP on the first win only. Results explain it on replays. | `test_progress_v2_migration_runs_levels_and_merge` (5 identical replays earn 0) |
+| 16 | Dates | Winding the device clock back gave no signal; a reset clock behaved like a normal date. | `Progress.date_seen` (progress v3, migrated from bests, merged by max); dates > 1 day before it, or < 2024, are off-clock: still playable, flagged on Modes/results, never submitted. | `test_daily_dates_survive_clock_changes` |
+| 17 | Score | "Rare events weathered" counted every hit, even the one that ended the run. | New `rare_weathered` counts a hit only once the village is still alive 30 days later. Save v4 migrates. | `test_rare_events_score_only_once_outlasted` |
+| 18 | Exit | The exit-leak fix waited a fixed real-time delay (heuristic). | `Main.drain_audio()` waits for two observed mixer passes + two frames after stopping every player (3 s guard only without an audio thread). 0/8 leaks under parallel load; full screenshot run clean. | `test_exit_waits_for_the_mixer_not_a_timer`, screenshot log grep |
 
 ## Known gaps (not fixed, by decision or out of scope)
-- **XP farming**: XP is granted for every completed run, so replaying a seeded island repeatedly earns XP.
-  Harmless offline (no leaderboard). Before any online feature: grant score XP only for a new personal best per id.
-- **Daily uses the device's local date**: players in different time zones see the same island at different
-  moments, and changing the clock unlocks future dailies. Acceptable offline; an online version should take the
-  date from the server (see LIVEOPS.md).
+- **Clock set ahead**: a player can see a future daily early by changing the device clock (offline cannot
+  prevent it). Winding back is detected (finding 16). An online version should take the date from the server.
 - **No replay verification**: scores are not backed by an action log, so they cannot be verified. Required before
   any shared leaderboard (TDD "Online-ready").
-- **Exit-leak fix is timing-based**: the settle delay removed the leak in 8/8 runs at 1 s (3/8 leaked at 0.25 s)
-  under parallel load; it is a heuristic, not a guarantee. Leaks at exit are harmless to players (the OS frees
-  them) but noisy in logs.
-- **`rare_survived` score term counts rare events that hit**, not ones that were survived in any stronger sense;
-  the run ending afterwards still keeps the points.
 - Grazing in a tick uses the goat count before wolf predation that same tick (≤ 0.4 % difference).

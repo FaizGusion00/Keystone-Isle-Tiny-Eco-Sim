@@ -48,6 +48,8 @@ const SCALAR_FIELDS := [
 	"k_wildlife", "k_village", "housing_event", "fire_burned",
 	# --- v3: rare events, species, endless escalation ---
 	"rare_events", "escalate", "species", "species_seen", "rare_event", "rare_hits",
+	# --- v4: only rare events the run outlasts score ---
+	"rare_weathered",
 ]
 
 ## Scalars added after save version 1, with their defaults for migrated saves.
@@ -65,6 +67,9 @@ const V2_SCALAR_DEFAULTS := {
 const V3_SCALAR_DEFAULTS := {
 	"rare_events": false, "escalate": false, "species": 0, "species_seen": 0, "rare_event": -1, "rare_hits": 0,
 }
+
+## Scalars added in save version 4 (v1-v3 saves derive them in SaveSystem.from_dict).
+const V4_SCALAR_DEFAULTS := {"rare_weathered": 0}
 
 var width: int = 0
 var height: int = 0
@@ -157,7 +162,8 @@ var escalate: bool = false         ## endless: storms & fires grow fiercer every
 var species: int = 0               ## bitmask of species living on the island now
 var species_seen: int = 0          ## bitmask of species that have ever lived here this run
 var rare_event: int = -1           ## latest rare event (locusts / bloom / king tide)
-var rare_hits: int = 0             ## rare events weathered this run
+var rare_hits: int = 0             ## rare events that struck this run
+var rare_weathered: int = 0        ## rare events the run outlasted by RARE_COOLDOWN days (scored)
 
 
 func _init(w: int = 32, h: int = 32, s: int = 0) -> void:

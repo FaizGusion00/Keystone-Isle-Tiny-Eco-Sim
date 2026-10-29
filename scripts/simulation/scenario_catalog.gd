@@ -269,7 +269,7 @@ static func score(d: Dictionary, ws: WorldState, days: int) -> int:
 	var raw := float(w.get("per_day", 1.0)) * days + float(w.get("keystone", 0.0)) * ws.keystone \
 		+ float(w.get("peak_villagers", 0.0)) * ws.peak_villagers + float(w.get("harvests", 0.0)) * ws.harvests \
 		+ float(w.get("village_growth", 0.0)) * maxi(ws.peak_villagers - IslandGenerator.START_VILLAGERS, 0) \
-		+ float(w.get("species", 0.0)) * species + float(w.get("rare_survived", 0.0)) * ws.rare_hits \
+		+ float(w.get("species", 0.0)) * species + float(w.get("rare_survived", 0.0)) * ws.rare_weathered \
 		+ float(w.get("villagers_lost", 0.0)) * ws.villagers_lost
 	return maxi(int(round(raw * float(d.get("score_mult", 1.0)))), 0)
 

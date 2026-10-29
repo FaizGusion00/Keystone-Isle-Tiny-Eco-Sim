@@ -55,7 +55,14 @@ climate_rain, climate_storm, climate_fire, degrade`.
   date (tested: a future-dated mutator leaves earlier islands unchanged).
 - **The daily id uses the device's local calendar date**, so two players in different time zones
   can be on different islands for a few hours. Fine offline; an online leaderboard would key on
-  UTC (change in `ScenarioCatalog.daily_id`).
+  UTC (change in `ScenarioCatalog.daily_id`). Clock changes are handled by `Progress.observe_date`
+  (TDD "Daily/weekly dates"): winding the clock back more than a day marks runs off-clock (playable,
+  never submitted); setting it ahead lets a player see a future island early, which only an
+  online server date can prevent.
+- **XP is improvement-only** (`Progress.record_run`): a seeded island pays score XP only for points
+  above your best on that id and medal XP only for new medal tiers; campaign maps pay star XP for
+  new stars and score XP on the first win. Keep it that way when adding XP sources, or replays
+  become a farm. Fresh endless seeds are new islands and pay in full.
 - **Retuning** score weights or medal thresholds changes the meaning of existing bests. Do it only
   at a "season" boundary (see roadmap), and say so in the patch notes. Medals already earned are
   kept (bests store the medal; merge keeps the max).

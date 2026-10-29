@@ -540,11 +540,13 @@ func _check_scenario() -> void:
 	set_speed(SimClock.Speed.PAUSED)
 	var won := _scenario_status == Scenario.Status.WON
 	var sc := sim.scenario
-	progress.record_result(sc.id, won, sc.stars if won else 0)
 	var pts := sc.score(sim.world)
 	var run := progress.record_run(sc.id, won, sc.stars if won else 0, pts, sc.days_elapsed(sim.world),
 		sc.stars if sc.is_scored() else 0)
-	if sc.is_scored() and not sim.world.relaxed:
+	progress.record_result(sc.id, won, sc.stars if won else 0)
+	var mode := ScenarioCatalog.mode_of(sc.id)
+	run["off_clock"] = mode in ["daily", "weekly"] and progress.observe_date(Progress.date_key())
+	if sc.is_scored() and not sim.world.relaxed and not run["off_clock"]:
 		services.submit_score(sc.id, pts)
 	var fresh := _check_achievements(true)
 	if persistence:
@@ -696,19 +698,39 @@ func _unhandled_input(event: InputEvent) -> void:
 
 ## Clean exit: silence audio first so its playbacks are released before the engine shuts down.
 var _quitting := false
-
-## `settle` = real seconds the audio mixer gets to drop its playbacks (see docs/TDD.md, Clean exit).
-func quit_game(settle := 0.3) -> void:
+## Quits once the audio mixer has provably dropped every playback (no timer heuristic):
+## stop all players, then wait until the mixer has run two passes after the stop (pass 1 fades
+## the playbacks out, pass 2 marks them for deletion) plus two frames for the main thread to free
+## them. `AudioServer.get_time_since_last_mix()` dropping between two polls proves a pass ran.
+## A 3 s guard only matters if no audio thread runs at all (then nothing is pending anyway).
+func quit_game() -> void:
 	if _quitting:
 		return
 	_quitting = true
 	if AudioDirector.current != null:
 		AudioDirector.current.shutdown()
-	# The mixer thread drops stopped playbacks on its own schedule, so give it real time, not
-	# just frames, before the audio server shuts down (too short only costs an exit warning).
-	await get_tree().process_frame
-	await get_tree().create_timer(settle, true, false, true).timeout
+	await drain_audio()
 	get_tree().quit()
+
+
+var drain_stats := {}
+
+func drain_audio(guard_ms := 3000) -> void:
+	var t0 := Time.get_ticks_msec()
+	var mixes := 0
+	var frames_after := 0
+	var last := AudioServer.get_time_since_last_mix()
+	while frames_after < 2 and Time.get_ticks_msec() - t0 < guard_ms:
+		await get_tree().process_frame
+		var now := AudioServer.get_time_since_last_mix()
+		if now < last:
+			mixes += 1
+		last = now
+		if mixes >= 2:
+			frames_after += 1
+	drain_stats = {"mixes": mixes, "ms": Time.get_ticks_msec() - t0, "guard_hit": frames_after < 2}
+	if OS.get_cmdline_user_args().has("--log-exit"):
+		print("exit drain: ", drain_stats)
 
 
 func _process(delta: float) -> void:

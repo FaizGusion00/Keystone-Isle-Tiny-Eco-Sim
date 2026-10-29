@@ -783,6 +783,10 @@ func _modes(sz: Vector2) -> Control:
 	grid.add_theme_constant_override("v_separation", 12)
 	body.add_child(grid)
 	var ids := [ScenarioCatalog.daily_id(), ScenarioCatalog.weekly_id(), ScenarioCatalog.endless_id(_endless_seed)]
+	if pr.observe_date(Progress.date_key()):
+		var warn := UiKit.wrap_label("Your device clock reads earlier than a day you already played. Islands follow your clock, "
+			+ "but scores from them stay on this device.", "Caption")
+		body.add_child(warn)
 	var k := 0
 	for id in ids:
 		var c := _mode_card(ScenarioCatalog.get_def(id), pr)
@@ -1117,6 +1121,14 @@ func _xp_line(run: Dictionary) -> Control:
 	if bool(run.get("level_up", false)):
 		t += "  ·  Level up! You are now level %d" % pr.level()
 	v.add_child(UiKit.label(t, 17, "Subheading"))
+	if bool(run.get("off_clock", false)):
+		var oc := UiKit.label("Your device clock is earlier than a day you already played, so this score stays on this device.", 0, "Caption")
+		oc.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+		v.add_child(oc)
+	if bool(run.get("replay", false)):
+		var why := UiKit.label("Replays earn XP only for beating your best on this island.", 0, "Caption")
+		why.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+		v.add_child(why)
 	v.add_child(UiKit.meter(pr.level_progress(), UiKit.TEAL, 8))
 	h.add_child(v)
 	return c

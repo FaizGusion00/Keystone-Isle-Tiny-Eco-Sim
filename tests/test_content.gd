@@ -175,6 +175,52 @@ func test_long_endless_run_sees_rare_life_and_ends_scored() -> void:
 		assert_true(sc.stars >= 0 and sc.stars <= 3)
 
 
+func test_rare_events_score_only_once_outlasted() -> void:
+	var sim := _farm_sim()
+	var ws := sim.world
+	ws.rare_events = true
+	var tick0 := ws.tick
+	ws.rare_event = sim.events.record(tick0, EventLog.Type.ALGAL_BLOOM, 1, 1, 50.0)
+	var bloom := ws.rare_event
+	ws.rare_hits = 1
+	for k in Simulation.RARE_COOLDOWN - 1:
+		ws.tick = tick0 + k + 1
+		sim._rare()
+	assert_eq(ws.rare_weathered, 0, "still inside the cooldown: not weathered yet")
+	var d := ScenarioCatalog.get_def("daily_20261030")
+	var before := ScenarioCatalog.score(d, ws, 100)
+	ws.tick = tick0 + Simulation.RARE_COOLDOWN
+	sim._rare()
+	assert_eq(ws.rare_weathered, 1, "outlasted by RARE_COOLDOWN days")
+	assert_true(ScenarioCatalog.score(d, ws, 100) > before)
+	ws.tick += 1
+	sim._rare()
+	assert_eq(ws.rare_weathered, 1, "counted once")
+	# a village that is gone did not weather it
+	var sim2 := _farm_sim()
+	sim2.world.rare_events = true
+	sim2.world.rare_event = sim2.events.record(sim2.world.tick, EventLog.Type.LOCUSTS, 1, 1, 3.0)
+	sim2.world.villagers = 0
+	sim2.world.tick += Simulation.RARE_COOLDOWN
+	sim2._rare()
+	assert_eq(sim2.world.rare_weathered, 0)
+	# v3 saves migrate: past hits count, a hit still in its cooldown does not
+	ws.rare_event = bloom
+	ws.rare_hits = 2
+	var dd := SaveSystem.to_dict(sim)
+	dd["version"] = 3
+	dd["world"]["scalars"].erase("rare_weathered")
+	var back := SaveSystem.from_dict(dd)
+	assert_true(back != null)
+	assert_eq(back.world.rare_weathered, 2, "last hit was %d days ago: weathered" % (back.world.tick - back.events.tick_of(back.world.rare_event)))
+	ws.rare_event = sim.events.record(ws.tick, EventLog.Type.KING_TIDE, 1, 1, 2.0)
+	ws.rare_hits = 3
+	dd = SaveSystem.to_dict(sim)
+	dd["version"] = 3
+	dd["world"]["scalars"].erase("rare_weathered")
+	assert_eq(SaveSystem.from_dict(dd).world.rare_weathered, 2, "the fresh hit is not counted yet")
+
+
 func test_scores_and_medals() -> void:
 	var d := ScenarioCatalog.get_def("daily_20261030")
 	var ws := WorldState.new(4, 4, 1)
@@ -182,7 +228,8 @@ func test_scores_and_medals() -> void:
 	ws.peak_villagers = 15
 	ws.harvests = 20
 	ws.species_seen = Simulation.SP_BEES | Simulation.SP_FROGS
-	ws.rare_hits = 1
+	ws.rare_hits = 3 # struck three times, outlasted one: only the weathered one scores
+	ws.rare_weathered = 1
 	# 1/day + 3/keystone + 30/villager grown beyond the start + 5/harvest + 30/species + 20/rare event
 	var expect := int(round((240 + 3 * 80 + 30 * (15 - IslandGenerator.START_VILLAGERS) + 5 * 20 + 30 * 2 + 20) * float(d["score_mult"])))
 	assert_eq(ScenarioCatalog.score(d, ws, 240), expect)
@@ -196,6 +243,7 @@ func test_scores_and_medals() -> void:
 	idle.peak_villagers = IslandGenerator.START_VILLAGERS
 	idle.species_seen = Simulation.SP_BEES | Simulation.SP_FROGS | Simulation.SP_SEABIRDS
 	idle.rare_hits = 2
+	idle.rare_weathered = 2
 	assert_eq(ScenarioCatalog.medal_for(d, ScenarioCatalog.score(d, idle, 240)), 0, "idle play earns no medal")
 	# a finished daily run gives a medal instead of stars
 	var sim := ScenarioCatalog.create_sim(d)
@@ -211,7 +259,7 @@ func test_save_v3_identity_and_roundtrip() -> void:
 	sim.run(80)
 	var d1 := SaveSystem.to_dict(sim, {"saved_at": 100.0})
 	var d2 := SaveSystem.to_dict(sim, {"saved_at": 200.0})
-	assert_eq(d1["version"], 3)
+	assert_eq(d1["version"], SaveSystem.VERSION)
 	assert_eq(d1["save"]["id"], d2["save"]["id"], "lineage id is stable")
 	assert_eq(int(d2["save"]["revision"]), int(d1["save"]["revision"]) + 1)
 	var back := SaveSystem.from_dict(JSON.parse_string(JSON.stringify(d2)))
@@ -272,12 +320,27 @@ func test_progress_v2_migration_runs_levels_and_merge() -> void:
 	assert_false(pr.record_run("daily_20261030", true, 1, 500, 240, 1)["new_best"], "lower score is not a best")
 	assert_eq(int(pr.best("daily_20261030")["score"]), 1000)
 	assert_eq(pr.level(), 2, "xp %d" % pr.xp)
+	var xp_before := pr.xp
+	for k in 5: # farming the same seeded island earns nothing
+		var again_r := pr.record_run("daily_20261030", true, 2, 1000, 240, 2)
+		assert_eq(int(again_r["xp"]), 0, "identical replay earns no XP")
+		assert_true(bool(again_r["replay"]))
+	var better := pr.record_run("daily_20261030", true, 3, 1200, 240, 3)
+	assert_eq(int(better["xp"]), int(round(0.2 * 200)) + 60, "only the improvement (score +200, one medal tier) counts")
+	assert_eq(pr.xp, xp_before + int(better["xp"]))
+	assert_eq(int(pr.best("daily_20261030")["medal"]), 3)
+	# campaign maps: stars above your best, score XP on the first win only
+	var c1 := pr.record_run("living_island", true, 3, 500, 200, 0)
+	assert_eq(int(c1["xp"]), 40, "living_island already had 2 stars: one more star, no repeat score XP")
+	pr.record_result("living_island", true, 3)
+	assert_eq(int(pr.record_run("living_island", true, 3, 900, 200, 0)["xp"]), 0, "campaign replay earns nothing")
+	assert_eq(int(pr.record_run("expanding_village", true, 1, 500, 200, 0)["xp"]), 100 + 40, "first win: score + stars")
 	assert_eq(Progress.xp_for_level(2), 250)
 	assert_eq(Progress.xp_for_level(3), 750)
 	assert_eq(pr.save(), OK)
 	var again := Progress.load_from(p)
-	assert_eq(int(again.best("daily_20261030")["score"]), 1000)
-	assert_eq(int(again.best("daily_20261030")["medal"]), 2)
+	assert_eq(int(again.best("daily_20261030")["score"]), 1200)
+	assert_eq(int(again.best("daily_20261030")["medal"]), 3)
 	assert_eq(again.xp, pr.xp)
 	assert_eq(again.profile_id, pr.profile_id)
 	# merge: union / max
@@ -418,3 +481,38 @@ func test_new_mutators_never_change_existing_islands() -> void:
 	assert_true(seen, "it enters the pool from its date")
 	assert_eq(ContentDB.validate().size(), 0, str(ContentDB.validate()))
 	ContentDB.clear_cache()
+
+
+func test_daily_dates_survive_clock_changes() -> void:
+	var pr := Progress.new()
+	assert_false(pr.observe_date("20261030"), "first date seen")
+	assert_false(pr.observe_date("20261031"), "next day")
+	assert_false(pr.observe_date("20270115"), "clock set ahead: just advances")
+	assert_eq(pr.date_seen, "20270115")
+	assert_false(pr.observe_date("20270114"), "one day back (date line / time zone) is tolerated")
+	assert_true(pr.observe_date("20261101"), "clock wound back: off-clock")
+	assert_eq(pr.date_seen, "20270115", "never moves backwards")
+	assert_true(pr.observe_date("19700101"), "reset clock is off-clock")
+	assert_true(pr.observe_date("garbage!"))
+	# the island for the clock's date is still offered and is the same island as ever
+	var past := ScenarioCatalog.daily_id({"year": 2026, "month": 11, "day": 1})
+	assert_eq(past, "daily_20261101")
+	assert_eq(ScenarioCatalog.generated_def(past)["seed"], ScenarioCatalog.generated_def(past)["seed"])
+	# a run started before midnight keeps its island after a save/load on the next day
+	var sim := ScenarioCatalog.create_sim(ScenarioCatalog.get_def("daily_20261030"))
+	var back := SaveSystem.from_dict(JSON.parse_string(JSON.stringify(SaveSystem.to_dict(sim))))
+	assert_eq(back.scenario.id, "daily_20261030")
+	# weekly ids are stable across a week and DST/month edges
+	assert_eq(ScenarioCatalog.weekly_id({"year": 2026, "month": 11, "day": 1}), "weekly_20261026")
+	assert_eq(ScenarioCatalog.weekly_id({"year": 2026, "month": 10, "day": 26}), "weekly_20261026")
+	assert_eq(ScenarioCatalog.weekly_id({"year": 2026, "month": 3, "day": 29}), "weekly_20260323")
+	# v2 progress migrates date_seen from the newest seeded best; merge keeps the max
+	var old := Progress.new()
+	old.load_dict({"version": 2, "bests": {"daily_20261029": {"score": 5}, "weekly_20261026": {"score": 9},
+		"endless_99999999": {"score": 1}}})
+	assert_eq(old.date_seen, "20261029")
+	var other := Progress.new()
+	other.date_seen = "20261105"
+	old.merge(other)
+	assert_eq(old.date_seen, "20261105")
+	assert_eq(Progress.new().to_dict()["version"], 3)
