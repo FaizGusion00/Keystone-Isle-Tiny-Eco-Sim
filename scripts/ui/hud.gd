@@ -762,8 +762,9 @@ func update_objectives(sim: Simulation) -> void:
 		_obj_status = sc.status
 	elif done > _obj_done or sc.status != _obj_status:
 		_obj_status = sc.status  # a goal just ticked (or the run ended): open to show it
-		set_goals_collapsed(false)
-		_arm_goal_collapse()
+		if not (portrait and _inspector.visible):
+			set_goals_collapsed(false)
+			_arm_goal_collapse()
 	elif not _obj_collapsed and sim.world.tick - _obj_arm_tick >= OBJ_AUTO_DAYS and not coach_active():
 		set_goals_collapsed(true)
 	_obj_done = done
@@ -823,6 +824,8 @@ func show_tile(sim: Simulation, t: Vector2i) -> void:
 			_slide_out(_inspector)
 		_insp_tile = Vector2i(-1, -1)
 		return
+	if portrait:
+		world_touched()  # a phone screen can't fit the checklist and the inspector at once
 	var fresh := t != _insp_tile or not _inspector.visible
 	_insp_tile = t
 	var i := ws.index(t.x, t.y)
