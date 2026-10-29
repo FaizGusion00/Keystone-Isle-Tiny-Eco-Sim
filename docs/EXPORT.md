@@ -42,10 +42,13 @@ set `application/app_store_team_id` locally (do **not** commit your Team ID), en
 which writes `KeystoneIsle.xcodeproj` + pck + frameworks into `build/ios/`. Open in Xcode, pick the team,
 archive, and upload.
 
-## Verified status (2026-10-30, Linux box)
+## Verified status (2026-10-30, Linux box, Godot 4.7.2)
+All presets carry version 1.0.0 (build 1), matching `config/version`.
+
 | Target | Result |
 |---|---|
-| Windows | exe exported (~112 MB), not run on Windows |
-| Android | debug APK exported, signed with debug key, `apksigner verify` OK; not installed on a device |
-| macOS | zip with `Keystone Isle.app` exported; unsigned, not launched on a Mac |
-| iOS | Xcode project generated using a placeholder Team ID; not built in Xcode |
+| Windows | `KeystoneIsle.exe` (~112 MB, PE32+ with embedded pck); not run on Windows |
+| Android | debug APK (~60 MB, arm64-v8a + armeabi-v7a, minSdk 24, targetSdk 36), `apksigner verify` OK with debug key; not installed on a device |
+| macOS | zip with `Keystone Isle.app` (Info.plist 1.0.0); unsigned/not notarized, not launched on a Mac |
+| iOS | Xcode project generated using a placeholder Team ID (`export_project_only`); not built in Xcode |
+| Linux (smoke only) | temporary uncommitted preset; the exported binary boots headless (`--quit-after 900`) and under Xvfb renders a seeded gameplay screenshot with no errors |
