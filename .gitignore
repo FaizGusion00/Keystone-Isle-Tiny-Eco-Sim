@@ -17,3 +17,9 @@ export_credentials.cfg
 Thumbs.db
 *.tmp
 .vscode/
+
+# Signing material
+*.keystore
+*.jks
+*.p12
+*.mobileprovision
