@@ -2,7 +2,8 @@ extends TestCase
 ## UI layer: screens, HUD costs/inspector/why-chain, coach marks, clock hold, camera easing.
 
 const DIR := "user://test_ui"
-const SCREENS := ["menu", "campaign", "challenges", "new_world", "settings", "pause", "load", "save", "achievements"]
+const SCREENS := ["menu", "campaign", "challenges", "new_world", "settings", "pause", "load", "save", "achievements",
+	"modes", "journal", "codex", "help"]
 
 
 func _main() -> Node:
@@ -240,4 +241,32 @@ func test_title_menu_frames_island_and_restores_camera() -> void:
 	assert_true(free.grow(4.0).has_point(on_screen), "island centred in the free space (%s in %s)" % [on_screen, free])
 	main.screens.close()
 	assert_true(main.camera.position.distance_to(pos) < 0.5 and main.camera.zoom.is_equal_approx(zoom), "closing the menu returns the camera")
+	_free(main)
+
+
+func test_scored_results_banner_prestige_and_sandbox_rare_events() -> void:
+	var main := _main()
+	main.persistence = false
+	main.progress = Progress.new()
+	main.progress.path = DIR + "/progress.json"
+	main._debug_screen("results_daily")
+	assert_eq(main.screens.current, "results")
+	assert_true(main.sim.scenario.is_scored())
+	# banners: a locked one is refused by banner_color, an unlocked one reaches the world view
+	main.set_banner("coral")
+	assert_eq(main.world_view.banner_color, Color.html("2f7d6d"), "locked banner falls back to Lagoon")
+	main.progress.xp = Progress.xp_for_level(3)
+	main.set_banner("coral")
+	assert_eq(main.world_view.banner_color, Color.html("e0765a"))
+	assert_false(main.prestige(), "prestige needs level 10")
+	main.progress.xp = Progress.xp_for_level(10)
+	assert_true(main.prestige())
+	assert_eq(main.progress.prestige, 1)
+	assert_eq(main.world_view.banner_color, Color.html("e0765a"), "level banners stay unlocked after prestige")
+	main.screens.open("journal", {}, false)
+	main.screens.open("modes", {}, false)
+	main.start_sandbox({"seed": 9, "size": 24, "preset": 0, "rare_events": true})
+	assert_true(main.sim.world.rare_events)
+	main.restart_scenario()
+	assert_true(main.sim.world.rare_events, "restart keeps the rare-events option")
 	_free(main)

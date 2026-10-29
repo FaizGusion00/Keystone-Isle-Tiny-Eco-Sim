@@ -108,6 +108,15 @@ func _ready() -> void:
 
 func _debug_screen(n: String) -> void:
 	match n:
+		"results_daily":
+			start_scenario(ScenarioCatalog.daily_id({"year": 2026, "month": 10, "day": 30}))
+			hud.clear_popups()
+			clock.held = true
+			sim.scenario.final_score = 1320
+			sim.scenario.stars = 2
+			sim.scenario.reason = "Final score 1320  ·  silver"
+			progress.xp = 300
+			screens.open("results", {"won": true, "stars": 2, "run": {"xp": 324, "level_up": true, "new_best": true}})
 		"results_won", "results_failed":
 			if sim.scenario == null:
 				sim.scenario = Scenario.tutorial()
@@ -126,6 +135,25 @@ func _debug_results(won: bool) -> void:
 	else:
 		sim.scenario.reason = "Too few villagers remain: the village could not feed itself."
 		screens.open("results", {"won": false, "chain": _failure_chain()})
+
+
+## Cosmetic banner chosen in the Journal: saved with the profile and shown over the village.
+func set_banner(id: String) -> void:
+	progress.banner = id
+	progress.updated_at = _now()
+	if persistence:
+		progress.save()
+	world_view.set_banner(progress.banner_color())
+
+
+func prestige() -> bool:
+	if not progress.do_prestige():
+		return false
+	progress.updated_at = _now()
+	if persistence:
+		progress.save()
+	AudioDirector.sfx("win")
+	return true
 
 
 ## Push visual/audio settings into the running game (called at start and whenever they change).
@@ -218,7 +246,7 @@ func restart_scenario() -> void:
 	var opts := _last_opts.duplicate()
 	if sim.scenario.is_sandbox() and opts.is_empty():
 		opts = {"seed": sim.world.world_seed, "size": sim.world.width, "relaxed": sim.world.relaxed,
-			"free_build": sim.world.free_build}
+			"free_build": sim.world.free_build, "rare_events": sim.world.rare_events}
 	start_scenario(sim.scenario.id, opts)
 
 
@@ -352,6 +380,7 @@ func set_simulation(s: Simulation) -> void:
 	_seen_event_id = sim.events.next_id
 	hud.hide_events()
 	clock.sim = sim
+	world_view.banner_color = progress.banner_color()
 	world_view.set_world(sim.world, sim.events)
 	ambience.set_world(world_view)
 	_menu_view = {}

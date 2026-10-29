@@ -19,7 +19,8 @@
       900,
       1250,
       1550
-    ]
+    ],
+    "blurb": "A new island every day, the same for everyone. Survive 240 days with two mutators."
   },
   "weekly": {
     "title": "Weekly Expedition",
@@ -31,7 +32,8 @@
       1300,
       1800,
       2300
-    ]
+    ],
+    "blurb": "A bigger island all week long: 360 days with three mutators."
   },
   "endless": {
     "title": "Endless",
@@ -45,7 +47,8 @@
     ],
     "census_start": 6,
     "census_step": 1,
-    "census_max": 20
+    "census_max": 20,
+    "blurb": "Survive as long as you can. Weather worsens yearly and each census asks for more villagers."
   },
   "xp": {
     "per_score": 0.2,

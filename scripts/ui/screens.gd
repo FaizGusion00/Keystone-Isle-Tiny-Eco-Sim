@@ -24,7 +24,11 @@ var _content: Control
 var menu_free_rect := Rect2()  ## viewport px left for the island beside the title menu
 var _post_fit: Callable  ## layout step that needs the content inside the themed tree
 # new-world form state
-var _nw := {"seed": 0, "size": 1, "preset": 0, "relaxed": false, "free_build": false}
+var _nw := {"seed": 0, "size": 1, "preset": 0, "relaxed": false, "free_build": false, "rare_events": false}
+var _endless_seed := 0
+var _prestige_armed := false
+const MEDAL_COLORS := [Color("a39887"), Color("b87333"), Color("8f9aa6"), Color("e0a33a")]
+const MODE_ICONS := {"daily": "calendar", "weekly": "calendar-days", "endless": "infinity"}
 
 
 func _ready() -> void:
@@ -126,6 +130,10 @@ func _build(screen_name: String, animate := true) -> void:
 		"load", "save": _content = _slots(sz, screen_name == "save")
 		"results": _content = _results(sz)
 		"achievements": _content = _achievements(sz)
+		"modes": _content = _modes(sz)
+		"journal": _content = _journal(sz)
+		"codex": _content = _codex(sz)
+		"help": _content = _help(sz)
 		_: _content = Control.new()
 	root.add_child(_content)
 	if _post_fit.is_valid():
@@ -249,19 +257,34 @@ func _menu(sz: Vector2) -> Control:
 	if main.has_game():
 		items.append(["Continue", "play", func() -> void: main.resume_game(), true])
 	items.append(["Campaign", "map", func() -> void: open("campaign"), not main.has_game()])
+	items.append(["Daily · Weekly · Endless", "calendar", func() -> void: open("modes"), false])
 	items.append(["Challenges", "flame", func() -> void: open("challenges"), false])
 	items.append(["New world", "globe", func() -> void: open("new_world"), false])
 	items.append(["Load game", "folder-open", func() -> void: open("load"), false])
-	items.append(["Achievements", "award", func() -> void: open("achievements"), false])
-	items.append(["Settings", "settings", func() -> void: open("settings"), false])
+	items.append(["Journal", "book-open", func() -> void: open("journal"), false])
 	var k := 0
+	var bh := 54.0 if sz.y >= 700 else 48.0
 	for it in items:
-		var b := UiKit.button(it[0], Vector2(w, 54), it[1], "Primary" if it[3] else "")
+		var b := UiKit.button(it[0], Vector2(w, bh), it[1], "Primary" if it[3] else "")
 		b.alignment = HORIZONTAL_ALIGNMENT_LEFT
 		b.pressed.connect(it[2])
 		col.add_child(b)
 		UiKit.appear(b, Vector2(-16, 0), 0.22, 0.05 * k + 0.1)
 		k += 1
+	# settings + help share the last row to keep the menu short on small landscape phones
+	var last := UiKit.hbox(8)
+	var sb := UiKit.button("Settings", Vector2(0, bh), "settings")
+	sb.alignment = HORIZONTAL_ALIGNMENT_LEFT
+	sb.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	sb.pressed.connect(func() -> void: open("settings"))
+	last.add_child(sb)
+	var hb := UiKit.button("Help", Vector2(0, bh), "circle-help")
+	hb.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	hb.alignment = HORIZONTAL_ALIGNMENT_LEFT
+	hb.pressed.connect(func() -> void: open("help"))
+	last.add_child(hb)
+	col.add_child(last)
+	UiKit.appear(last, Vector2(-16, 0), 0.22, 0.05 * k + 0.1)
 	col.add_child(_gap(6))
 	var pr: Progress = main.progress
 	var foot := UiKit.hbox(14)
@@ -273,6 +296,10 @@ func _menu(sz: Vector2) -> Control:
 	s2.add_child(UiKit.icon("award", 18, UiKit.TEAL))
 	s2.add_child(UiKit.label("%d/%d achievements" % [pr.achievements.size(), Achievements.LIST.size()], 0, "Caption"))
 	foot.add_child(s2)
+	var s3 := UiKit.hbox(4)
+	s3.add_child(UiKit.icon("sparkles", 18, pr.banner_color()))
+	s3.add_child(UiKit.label("Level %d%s" % [pr.level(), "  ·  P%d" % pr.prestige if pr.prestige > 0 else ""], 0, "Caption"))
+	foot.add_child(s3)
 	col.add_child(foot)
 	var card: PanelContainer = null
 	if portrait:
@@ -418,11 +445,14 @@ func _new_world(sz: Vector2) -> Control:
 		"Half costs; villagers never leave.")
 	_row(s4, "hammer", "Free building", UiKit.toggle(bool(_nw["free_build"]), func(v: bool) -> void: _nw["free_build"] = v),
 		"Tools cost no labor or wood.")
+	_row(s4, "zap", "Rare events & species", UiKit.toggle(bool(_nw["rare_events"]), func(v: bool) -> void: _nw["rare_events"] = v),
+		"Locust swarms, algal blooms and king tides - and the wildlife that counters them.")
 	var go := UiKit.primary("Create island", "sparkles")
 	go.size_flags_horizontal = Control.SIZE_SHRINK_END
 	go.pressed.connect(func() -> void:
 		main.start_sandbox({"seed": int(_nw["seed"]), "size": ScenarioCatalog.SIZES[int(_nw["size"])],
-			"preset": int(_nw["preset"]), "relaxed": bool(_nw["relaxed"]), "free_build": bool(_nw["free_build"])}))
+			"preset": int(_nw["preset"]), "relaxed": bool(_nw["relaxed"]), "free_build": bool(_nw["free_build"]),
+			"rare_events": bool(_nw["rare_events"])}))
 	body.add_child(go)
 	return _fit_sheet(parts, sz)
 
@@ -595,13 +625,20 @@ func _when(unix: float) -> String:
 
 func _results(sz: Vector2) -> Control:
 	var won := bool(_data.get("won", false))
-	var parts := _sheet(sz, "Island saved!" if won else "The island needs you", "trophy" if won else "heart-pulse", 620.0)
-	var body: VBoxContainer = parts[2]
-	(parts[4] as HBoxContainer).get_child(0).visible = false
 	var sim: Simulation = main.sim
 	var sc := sim.scenario
+	var scored := sc != null and sc.is_scored()
+	var run: Dictionary = _data.get("run", {})
+	var title := "Island saved!" if won else "The island needs you"
+	if scored:
+		title = "Expedition complete" if won else "The run is over"
+	var parts := _sheet(sz, title, "medal" if scored else ("trophy" if won else "heart-pulse"), 620.0)
+	var body: VBoxContainer = parts[2]
+	(parts[4] as HBoxContainer).get_child(0).visible = false
 	body.add_child(UiKit.label(sc.title() if sc != null else "", 0, "Caption"))
-	if won:
+	if scored:
+		body.add_child(_score_block(sc, run))
+	elif won:
 		var srow := UiKit.hbox(10)
 		srow.alignment = BoxContainer.ALIGNMENT_CENTER
 		var n := int(_data.get("stars", 1))
@@ -617,10 +654,13 @@ func _results(sz: Vector2) -> Control:
 				tw.tween_property(s, "scale", Vector2.ONE, 0.35).set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT)
 		body.add_child(srow)
 	var reason := UiKit.wrap_label(sc.reason if sc != null else "", "")
+	reason.visible = not reason.text.begins_with("Final score")
 	reason.add_theme_font_size_override("font_size", 19)
 	reason.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	body.add_child(reason)
-	if sc != null and won:
+	if not run.is_empty():
+		body.add_child(_xp_line(run))
+	if sc != null and won and not scored:
 		var how := UiKit.card("Inset")
 		var hv := UiKit.vbox(6)
 		how.add_child(hv)
@@ -693,8 +733,9 @@ func _check_line(ok: bool, text: String) -> HBoxContainer:
 # ================================================================== achievements
 
 func _achievements(sz: Vector2) -> Control:
-	var parts := _sheet(sz, "Achievements", "award", 900.0)
+	var parts := _sheet(sz, "Journal", "book-open", 900.0)
 	var body: VBoxContainer = parts[2]
+	body.add_child(_journal_tabs(2))
 	var pr: Progress = main.progress
 	body.add_child(UiKit.label("%d of %d earned" % [pr.achievements.size(), Achievements.LIST.size()], 0, "Caption"))
 	var grid := GridContainer.new()
@@ -718,3 +759,364 @@ func _achievements(sz: Vector2) -> Control:
 		h.add_child(v)
 		grid.add_child(c)
 	return _fit_sheet(parts, sz)
+
+
+# ================================================================== daily / weekly / endless
+
+func _medal_icon(m: int, size := 22.0) -> TextureRect:
+	return UiKit.icon("medal" if m > 0 else "circle", size, MEDAL_COLORS[clampi(m, 0, 3)])
+
+
+func _modes(sz: Vector2) -> Control:
+	var parts := _sheet(sz, "Daily · Weekly · Endless", "calendar", 1040.0)
+	var body: VBoxContainer = parts[2]
+	var pr: Progress = main.progress
+	body.add_child(UiKit.wrap_label("Seeded islands with rare events and mutators. Everyone gets the same Daily and Weekly island; "
+		+ "score points, earn medals and beat your personal best.", "Caption"))
+	if _endless_seed == 0:
+		var rng := RandomNumberGenerator.new()
+		rng.randomize()
+		_endless_seed = rng.randi_range(1, 99999)
+	var grid := GridContainer.new()
+	grid.columns = 1 if portrait or sz.x < 760 else (3 if sz.x >= 1000 else 2)
+	grid.add_theme_constant_override("h_separation", 12)
+	grid.add_theme_constant_override("v_separation", 12)
+	body.add_child(grid)
+	var ids := [ScenarioCatalog.daily_id(), ScenarioCatalog.weekly_id(), ScenarioCatalog.endless_id(_endless_seed)]
+	var k := 0
+	for id in ids:
+		var c := _mode_card(ScenarioCatalog.get_def(id), pr)
+		grid.add_child(c)
+		UiKit.appear(c, Vector2(0, 14), 0.2, 0.05 * k)
+		k += 1
+	var tip := UiKit.card("InsetWarm")
+	var th := UiKit.hbox(10)
+	tip.add_child(th)
+	th.add_child(UiKit.icon("info", 20, UiKit.AMBER_DARK))
+	th.add_child(UiKit.wrap_label("Score counts days survived, island health, peak villagers, harvests, wildlife and rare events weathered, "
+		+ "minus villagers lost, times the mutator bonus.", "Caption"))
+	th.get_child(1).size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	body.add_child(tip)
+	return _fit_sheet(parts, sz)
+
+
+func _mode_card(d: Dictionary, pr: Progress) -> Control:
+	var id := str(d["id"])
+	var mode := str(d["kind"])
+	var md := ContentDB.mode(mode)
+	var unlocked := pr.is_unlocked(id)
+	var card := UiKit.card("Inset")
+	card.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	card.custom_minimum_size = Vector2(290, 0)
+	var col := UiKit.vbox(8)
+	card.add_child(col)
+	var head := UiKit.hbox(10)
+	head.add_child(UiKit.icon_badge(MODE_ICONS.get(mode, "map") if unlocked else "lock",
+		UiKit.TEAL_SOFT if unlocked else Color(UiKit.INK, 0.08), UiKit.TEAL_DARK if unlocked else UiKit.INK_FAINT, 42))
+	var tc := UiKit.vbox(0)
+	tc.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	tc.add_child(UiKit.label(str(md.get("title", mode.capitalize())), 20, "Heading"))
+	var sub := str(d["title"]).get_slice("·", 1).strip_edges()
+	tc.add_child(UiKit.label("%s · %s island" % [sub, IslandGenerator.PRESET_NAMES[int(d["preset"]) % 4]], 0, "Caption"))
+	head.add_child(tc)
+	col.add_child(head)
+	var blurb := UiKit.wrap_label(str(md.get("blurb", "")), "")
+	blurb.add_theme_font_size_override("font_size", 15)
+	blurb.add_theme_color_override("font_color", UiKit.INK_SOFT)
+	col.add_child(blurb)
+	var muts: Array = d.get("mutators", [])
+	if not muts.is_empty():
+		for mid in muts:
+			var m := ContentDB.mutator(str(mid))
+			var r := UiKit.hbox(8)
+			r.add_child(UiKit.icon(str(m.get("icon", "sparkles")), 18, UiKit.AMBER_DARK))
+			var ml := UiKit.wrap_label("%s - %s" % [m.get("title", mid), m.get("blurb", "")], "Caption")
+			ml.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+			r.add_child(ml)
+			col.add_child(r)
+		col.add_child(UiKit.label("Score bonus ×%.2f" % float(d.get("score_mult", 1.0)), 0, "Caption"))
+	elif d.has("census"):
+		var cz: Array = d["census"]
+		col.add_child(UiKit.wrap_label("Yearly census (every 120 days): at least %d villagers, +%d each year (up to %d)." % [int(cz[0]), int(cz[1]), int(cz[2])], "Caption"))
+	var medals: Array = d.get("medals", [])
+	var mr := UiKit.hbox(6)
+	for k in medals.size():
+		mr.add_child(_medal_icon(k + 1, 18))
+		mr.add_child(UiKit.label(str(int(medals[k])), 0, "Caption"))
+	col.add_child(mr)
+	var foot := UiKit.hbox(8)
+	var b := pr.best(id)
+	if b.is_empty():
+		foot.add_child(UiKit.label("Not played yet", 0, "Caption"))
+	else:
+		foot.add_child(_medal_icon(int(b.get("medal", 0)), 22))
+		foot.add_child(UiKit.label("Best %d" % int(b.get("score", 0)), 16, "Subheading"))
+	foot.add_child(UiKit.spacer())
+	if mode == "endless" and unlocked:
+		var dice := UiKit.icon_button("dice-5", "Another island")
+		dice.pressed.connect(func() -> void:
+			_endless_seed = (_endless_seed * 48271 + 11) % 99991 + 1
+			_build(current, false))
+		foot.add_child(dice)
+	if unlocked:
+		var play := UiKit.primary("Play" if b.is_empty() else "Replay", "play")
+		play.pressed.connect(func() -> void: main.start_scenario(id))
+		foot.add_child(play)
+	else:
+		foot.add_child(UiKit.label("Win island 1 to unlock", 0, "Caption"))
+		card.modulate = Color(1, 1, 1, 0.7)
+	col.add_child(foot)
+	return card
+
+
+# ================================================================== journal: profile, codex, achievements
+
+func _journal_tabs(sel: int) -> Control:
+	var tabs := UiKit.segmented(["Profile", "Codex", "Achievements"] if not portrait else ["Profile", "Codex", "Awards"], sel,
+		func(k: int) -> void:
+			current = ["journal", "codex", "achievements"][k]
+			_build(current, false), ["user", "book-open", "award"])
+	tabs.size_flags_horizontal = Control.SIZE_SHRINK_BEGIN
+	return tabs
+
+
+func _journal(sz: Vector2) -> Control:
+	var parts := _sheet(sz, "Journal", "book-open", 900.0)
+	var body: VBoxContainer = parts[2]
+	body.add_child(_journal_tabs(0))
+	var pr: Progress = main.progress
+	# level card
+	var lc := UiKit.card("InsetTeal")
+	var lh := UiKit.hbox(14)
+	lc.add_child(lh)
+	var lvl := UiKit.icon_badge("sparkles", pr.banner_color(), Color.WHITE, 56)
+	lh.add_child(lvl)
+	var lv := UiKit.vbox(4)
+	lv.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	var lt := "Steward level %d" % pr.level()
+	if pr.prestige > 0:
+		lt += "  ·  Prestige %d" % pr.prestige
+	lv.add_child(UiKit.label(lt, 22, "Heading"))
+	lv.add_child(UiKit.meter(pr.level_progress(), UiKit.TEAL, 10))
+	var nxt := Progress.xp_for_level(pr.level() + 1)
+	lv.add_child(UiKit.label("%d / %d XP to level %d%s" % [pr.xp, nxt, pr.level() + 1,
+		"  ·  +%d%% XP from prestige" % (10 * pr.prestige) if pr.prestige > 0 else ""], 0, "Caption"))
+	lh.add_child(lv)
+	body.add_child(lc)
+	# stats
+	var st := _section(body, "Record", "trophy")
+	var flow := HFlowContainer.new()
+	flow.add_theme_constant_override("h_separation", 18)
+	flow.add_theme_constant_override("v_separation", 8)
+	st.add_child(flow)
+	for it in [["star-fill", UiKit.AMBER, "%d stars" % pr.total_stars()], ["trophy", UiKit.TEAL, "%d islands won" % pr.games_won],
+			["medal", MEDAL_COLORS[3], "%d medals" % pr.medal_count()],
+			["bird", UiKit.SKY, "%d/%d species" % [pr.species_count(), ContentDB.species().size()]],
+			["zap", UiKit.CORAL, "%d/%d rare events" % [pr.codex_events.size(), ContentDB.rare_events().size()]],
+			["award", UiKit.TEAL, "%d/%d achievements" % [pr.achievements.size(), Achievements.LIST.size()]]]:
+		var h := UiKit.hbox(6)
+		h.add_child(UiKit.icon(it[0], 20, it[1]))
+		h.add_child(UiKit.label(it[2], 16))
+		flow.add_child(h)
+	# banners
+	var bn := _section(body, "Village banner", "flag-triangle-right")
+	bn.add_child(UiKit.wrap_label("The flag over your village. New colours unlock with levels, medals, wildlife and prestige.", "Caption"))
+	var bf := HFlowContainer.new()
+	bf.add_theme_constant_override("h_separation", 8)
+	bf.add_theme_constant_override("v_separation", 8)
+	bn.add_child(bf)
+	for b in ContentDB.banners():
+		bf.add_child(_banner_chip(b, pr))
+	# prestige
+	var ps := _section(body, "Prestige", "rotate-ccw")
+	ps.add_child(UiKit.wrap_label("At level %d you may start a new prestige: your level returns to 1, every later run earns 10%% more XP, "
+		% int(ContentDB.mode("xp").get("prestige_level", 10)) + "and the Deep sea banner unlocks. Stars, medals, bests, codex and banners are kept.", "Caption"))
+	var pb := UiKit.button("Tap again to confirm" if _prestige_armed else "Prestige now", Vector2(0, 54), "rotate-ccw",
+		"Primary" if _prestige_armed else "")
+	pb.size_flags_horizontal = Control.SIZE_SHRINK_END
+	pb.disabled = not pr.can_prestige()
+	pb.pressed.connect(func() -> void:
+		if not _prestige_armed:
+			_prestige_armed = true
+		else:
+			_prestige_armed = false
+			main.prestige()
+		_build(current, false))
+	ps.add_child(pb)
+	if not pr.can_prestige():
+		_prestige_armed = false
+	return _fit_sheet(parts, sz)
+
+
+func _banner_chip(b: Dictionary, pr: Progress) -> Control:
+	var have := pr.banner_unlocked(b)
+	var sel := str(b["id"]) == pr.banner
+	var btn := Button.new()
+	btn.custom_minimum_size = Vector2(150, 56)
+	btn.theme_type_variation = "Primary" if sel else ""
+	btn.text = str(b["title"]) if have else _unlock_text(b.get("unlock", {}))
+	btn.icon = UiKit.icon_tex("flag-triangle-right" if have else "lock")
+	btn.add_theme_color_override("icon_normal_color", Color.html(str(b["color"])) if have and not sel else (Color.WHITE if sel else UiKit.INK_FAINT))
+	btn.add_theme_color_override("icon_hover_color", Color.html(str(b["color"])) if have and not sel else (Color.WHITE if sel else UiKit.INK_FAINT))
+	btn.expand_icon = false
+	btn.disabled = not have
+	btn.tooltip_text = "%s banner" % b["title"]
+	var id := str(b["id"])
+	btn.pressed.connect(func() -> void:
+		main.set_banner(id)
+		AudioDirector.sfx("ui_click")
+		_build(current, false))
+	return btn
+
+
+func _unlock_text(u: Dictionary) -> String:
+	if u.has("level"):
+		return "Level %d" % int(u["level"])
+	if u.has("medals"):
+		return "%d medals" % int(u["medals"])
+	if u.has("prestige"):
+		return "Prestige %d" % int(u["prestige"])
+	if u.has("species"):
+		return "%d species" % int(u["species"])
+	return "Locked"
+
+
+func _codex(sz: Vector2) -> Control:
+	var parts := _sheet(sz, "Journal", "book-open", 900.0)
+	var body: VBoxContainer = parts[2]
+	body.add_child(_journal_tabs(1))
+	var pr: Progress = main.progress
+	body.add_child(UiKit.wrap_label("Wildlife and rare events you have witnessed. They appear on Daily, Weekly and Endless islands, "
+		+ "or in a New world with rare events turned on.", "Caption"))
+	var cols := 1 if portrait or sz.x < 820 else 2
+	var sp := _section(body, "Species", "bird")
+	var g1 := GridContainer.new()
+	g1.columns = cols
+	g1.add_theme_constant_override("h_separation", 10)
+	g1.add_theme_constant_override("v_separation", 10)
+	sp.add_child(g1)
+	for s in ContentDB.species():
+		var seen := (pr.codex_species & int(s["bit"])) != 0
+		g1.add_child(_codex_card(str(s["icon"]), str(s["title"]) if seen else "Undiscovered species", seen,
+			["Needs: " + str(s["needs"]), str(s["effect"]) if seen else "Its effect is revealed once it settles on one of your islands."]))
+	var ev := _section(body, "Rare events", "zap")
+	var g2 := GridContainer.new()
+	g2.columns = cols
+	g2.add_theme_constant_override("h_separation", 10)
+	g2.add_theme_constant_override("v_separation", 10)
+	ev.add_child(g2)
+	for r in ContentDB.rare_events():
+		var seen := pr.codex_events.has(str(r["type"]))
+		g2.add_child(_codex_card(str(r["icon"]), str(r["title"]) if seen else "Unknown event", seen,
+			[str(r["text"]), "Counter: " + str(r["counter"])] if seen else ["Not witnessed yet. Survive long enough on a seeded island to see it."]))
+	return _fit_sheet(parts, sz)
+
+
+func _codex_card(icon_name: String, title: String, seen: bool, lines: Array) -> Control:
+	var c := UiKit.card("InsetTeal" if seen else "Inset")
+	c.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	c.custom_minimum_size.x = 260
+	var h := UiKit.hbox(10)
+	c.add_child(h)
+	h.add_child(UiKit.icon_badge(icon_name if seen else "lock", UiKit.TEAL if seen else Color(UiKit.INK, 0.07),
+		Color.WHITE if seen else UiKit.INK_FAINT, 42))
+	var v := UiKit.vbox(2)
+	v.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	v.add_child(UiKit.label(title, 17, "Subheading"))
+	for l in lines:
+		v.add_child(UiKit.wrap_label(str(l), "Caption"))
+	h.add_child(v)
+	return c
+
+
+# ================================================================== help
+
+const HELP := [
+	["target", "The goal", "Keep the villagers fed and the island alive. Every island card shows its goals; the top bar tracks food, wood, labor and island health."],
+	["hammer", "Tools", "Pick a tool in the bottom bar (Clear, Plant, Farm, House, Dam, Restore, Remove), then tap a tile. Farms feed people but wear out soil; forest holds slopes and water; dams store water but change the river; Restore heals bare land."],
+	["cloud-rain", "Seasons", "Each tick is one day and a year is 120 days: Spring, Rainy season, Summer, Dry season. Heavy rain floods valleys; drought brings fire."],
+	["layers", "Map layers", "The layers button colours the map by moisture, plants, soil, or water & mud. Colorblind-safe layers are in Settings."],
+	["circle-help", "Why did that happen?", "Open the event log and tap \"Why did this happen?\" on an event to see its chain of causes, e.g. cleared forest → muddy water → fewer fish → hunger."],
+	["bird", "Wildlife", "Bees, seabirds, tree frogs and wolves arrive when the island can support them, and each one helps: pollination, eggs, pest control and grazing control."],
+	["zap", "Rare events", "Locust swarms, algal blooms and king tides strike seeded islands. Each has a counter: forest near farms, clear coasts and coastal forest belts."],
+	["medal", "Medals and levels", "Daily, Weekly and Endless runs earn a score and a medal. Every run earns XP; levels unlock village banners, and prestige restarts levels for bonus XP."],
+	["history", "Saving", "The game autosaves often and keeps simulating briefly while you are away, then shows what happened. Use the pause menu for manual slots."],
+]
+
+
+func _help(sz: Vector2) -> Control:
+	var parts := _sheet(sz, "How to play", "circle-help", 760.0)
+	var body: VBoxContainer = parts[2]
+	for h in HELP:
+		var c := UiKit.card("Inset")
+		var r := UiKit.hbox(12)
+		c.add_child(r)
+		r.add_child(UiKit.icon_badge(str(h[0]), UiKit.TEAL_SOFT, UiKit.TEAL_DARK, 40))
+		var v := UiKit.vbox(2)
+		v.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		v.add_child(UiKit.label(str(h[1]), 17, "Subheading"))
+		v.add_child(UiKit.wrap_label(str(h[2]), "Caption"))
+		r.add_child(v)
+		body.add_child(c)
+	var btns := HFlowContainer.new()
+	btns.alignment = FlowContainer.ALIGNMENT_END
+	btns.add_theme_constant_override("h_separation", 8)
+	var coach := UiKit.button("Replay the tutorial", Vector2(0, 54), "compass")
+	coach.pressed.connect(func() -> void: main.start_tutorial())
+	btns.add_child(coach)
+	body.add_child(btns)
+	return _fit_sheet(parts, sz)
+
+
+
+func _score_block(sc: Scenario, run: Dictionary) -> Control:
+	var m := clampi(sc.stars, 0, 3)
+	var box := UiKit.vbox(4)
+	box.alignment = BoxContainer.ALIGNMENT_CENTER
+	var ic := _medal_icon(m, 72)
+	ic.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
+	box.add_child(ic)
+	if m > 0 and not UiKit.reduce_motion:
+		ic.pivot_offset = Vector2(36, 36)
+		ic.scale = Vector2.ZERO
+		var tw := ic.create_tween()
+		tw.tween_interval(0.3)
+		tw.tween_callback(func() -> void: AudioDirector.sfx("star", 0.9 + 0.12 * m))
+		tw.tween_property(ic, "scale", Vector2.ONE, 0.4).set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT)
+	var ml := UiKit.label(Scenario.MEDAL_NAMES[m].capitalize() + (" medal" if m > 0 else ""), 18, "Subheading")
+	ml.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	box.add_child(ml)
+	var pts := UiKit.label("%d points" % sc.final_score, 40, "Title")
+	pts.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	box.add_child(pts)
+	var medals: Array = sc.def.get("medals", [])
+	if m < medals.size():
+		var nx := UiKit.label("%d more for %s" % [int(medals[m]) - sc.final_score, Scenario.MEDAL_NAMES[m + 1]], 0, "Caption")
+		nx.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		box.add_child(nx)
+	if bool(run.get("new_best", false)):
+		var nb := UiKit.hbox(6)
+		nb.alignment = BoxContainer.ALIGNMENT_CENTER
+		nb.add_child(UiKit.icon("sparkles", 18, UiKit.AMBER_DARK))
+		nb.add_child(UiKit.label("New personal best!", 17, "Subheading"))
+		box.add_child(nb)
+		if not UiKit.reduce_motion:
+			UiKit.pop(nb)
+	return box
+
+
+func _xp_line(run: Dictionary) -> Control:
+	var pr: Progress = main.progress
+	var c := UiKit.card("InsetTeal")
+	var h := UiKit.hbox(10)
+	c.add_child(h)
+	h.add_child(UiKit.icon_badge("sparkles", pr.banner_color(), Color.WHITE, 40))
+	var v := UiKit.vbox(2)
+	v.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	var t := "+%d XP" % int(run.get("xp", 0))
+	if bool(run.get("level_up", false)):
+		t += "  ·  Level up! You are now level %d" % pr.level()
+	v.add_child(UiKit.label(t, 17, "Subheading"))
+	v.add_child(UiKit.meter(pr.level_progress(), UiKit.TEAL, 8))
+	h.add_child(v)
+	return c

@@ -58,6 +58,7 @@ var world: WorldState
 var events: EventLog
 var overlay: int = Overlay.NONE
 var colorblind := false
+var banner_color := Color("2f7d6d")  ## cosmetic flag over the settlement (Journal → Banners)
 var tile_colors := PackedColorArray()
 var heights := PackedFloat32Array()
 var down := PackedInt32Array()
@@ -246,6 +247,14 @@ func set_overlay(o: int) -> void:
 	if _water_mat != null:
 		_water_mat.set_shader_parameter("overlay_mud", 1.0 if o == Overlay.WATER else 0.0)
 	refresh()
+
+
+func set_banner(c: Color) -> void:
+	if c == banner_color:
+		return
+	banner_color = c
+	if world != null:
+		refresh(true)
 
 
 func set_colorblind(on: bool) -> void:
@@ -521,6 +530,13 @@ func _draw_structure(cv: CanvasItem, i: int, top: Vector2) -> void:
 			sprite(cv, "well", top + Vector2(-14, 4))
 			sprite(cv, "hall", top + Vector2(4, 0))
 			sprite(cv, "stall", top + Vector2(-2, 11))
+			# banner flag: a thin pole and pennant in the player's chosen colour
+			var pole := top + Vector2(17, 2)
+			cv.draw_line(pole, pole + Vector2(0, -24), Color("4a3b2c"), 1.5, true)
+			cv.draw_colored_polygon(PackedVector2Array([pole + Vector2(0.5, -24), pole + Vector2(13, -20.5),
+				pole + Vector2(0.5, -16)]), banner_color)
+			cv.draw_polyline(PackedVector2Array([pole + Vector2(0.5, -24), pole + Vector2(13, -20.5),
+				pole + Vector2(0.5, -16)]), banner_color.darkened(0.35), 1.0, true)
 		WorldState.Structure.HOUSE:
 			var big := world.peak_villagers >= 20 and hash_of(i, 2) % 2 == 0
 			if big:
