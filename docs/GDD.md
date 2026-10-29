@@ -43,5 +43,22 @@ soil depth, water/turbidity), "While you were away" summary.
 "Feed the Village": keep the village alive and fed for a season. Win: reach day 200 with
 ≥ 8 villagers and at least one farm. Fail: village drops below 5 villagers.
 
+## Modes (v1.0)
+- **Campaign** (6 chapters, unlocked in order, 1–3 stars each): A Living Island · The Expanding
+  Village · The Dry Season · The Floodplain · The Dam Decision · Recovery.
+- **Challenges** (4): Drought Year · Monsoon · Tinderbox · Boomtown.
+- **Sandbox / New island**: seed, size and terrain; no goals.
+- Tools: inspect, clear trees, plant, farm, house, dam, restore land, remove. Achievements and
+  per-scenario stars persist in `user://progress.json`; 3 manual save slots + autosave.
+
+## Presentation (v1.0)
+Calm, "museum diorama" look: warm paper panels, deep-sea backdrop, Fraunces display + Inter UI
+type, Lucide line icons. HUD = top chips (vitals, day/season, speed), bottom icon toolbar,
+slide-in inspector, toasts with per-event icons, goals card, event-history drawer with "Why?"
+cause chains, first-run coach marks. Responsive: phone portrait (stacked HUD, bottom sheets),
+phone landscape and desktop (side panels). Gentle generated audio (music, sea/rain ambience,
+UI and action cues) with 4 volume sliders; haptics on mobile; reduce-motion and colour-blind
+safe overlays.
+
 ## Out of scope (MVP)
 Multiplayer, accounts, cloud saves, analytics, ads, IAP, procedural music.
