@@ -184,7 +184,10 @@ func _compute_static() -> void:
 			var hpx := corner_h[b * cw + maxi(a - 1, 0)]
 			var hpy := corner_h[maxi(b - 1, 0) * cw + a]
 			# light from the upper left (map -x, a little -y): slopes facing it are brighter
-			_shade[b * cw + a] = clampf(1.0 + 0.018 * ((hx - hpx) * 0.5 + (hy - hpy) * 0.2), 0.84, 1.14)
+			var lit := clampf(1.0 + 0.018 * ((hx - hpx) * 0.5 + (hy - hpy) * 0.2), 0.84, 1.14)
+			# cavity occlusion: hollows and valley floors sit a touch darker, crests a touch brighter
+			var cav := (hx + hy + hpx + hpy) * 0.25 - corner_h[b * cw + a]
+			_shade[b * cw + a] = lit * clampf(1.0 - cav * 0.012, 0.9, 1.04)
 	_corner_fill.resize(n)
 	_corner_fill.fill(0)
 	for i in n:
@@ -308,6 +311,17 @@ func refresh(force: bool = false) -> int:
 			@warning_ignore("integer_division")
 			var ci := ((i / w) / CHUNK) * _chunks_x + (i % w) / CHUNK
 			_dirty[ci] = 1
+			var tx := i % w
+			@warning_ignore("integer_division")
+			var ty := i / w
+			if tx % CHUNK == 0 or tx % CHUNK == CHUNK - 1 or ty % CHUNK == 0 or ty % CHUNK == CHUNK - 1:
+				# corner shading (occlusion) is shared with the neighbours: keep chunk seams in step
+				for o in [Vector2i(-1, 0), Vector2i(1, 0), Vector2i(0, -1), Vector2i(0, 1), Vector2i(-1, -1), Vector2i(1, 1), Vector2i(1, -1), Vector2i(-1, 1)]:
+					var nx: int = tx + o.x
+					var ny: int = ty + o.y
+					if nx >= 0 and ny >= 0 and nx < w and ny < world.height:
+						@warning_ignore("integer_division")
+						_dirty[(ny / CHUNK) * _chunks_x + nx / CHUNK] = 1
 			if _corner_fill.size() == n and LandType.is_water(world.land_type[i]) == false:
 				# shore fills borrow a land neighbour's colour: redraw neighbouring chunks too
 				for j in [i - 1, i + 1, i - w, i + w]:
@@ -588,9 +602,12 @@ func draw_tile(cv: CanvasItem, x: int, y: int) -> void:
 			PackedColorArray([side.darkened(0.30), side.darkened(0.26), side.darkened(0.55), side.darkened(0.58)]))
 		cv.draw_colored_polygon(PackedVector2Array([ns, ne, ne + Vector2(0, 2.0), ns + Vector2(0, 2.0)]), col.darkened(0.36))
 	# top: per-vertex colour variation and slope light, both shared with neighbours => seamless
+	var ao := overlay == Overlay.NONE
 	cv.draw_polygon(_cur, PackedColorArray([
-		_vary(col, x, y) * _lit(y * cw + x), _vary(col, x + 1, y) * _lit(y * cw + x + 1),
-		_vary(col, x + 1, y + 1) * _lit((y + 1) * cw + x + 1), _vary(col, x, y + 1) * _lit((y + 1) * cw + x)]))
+		_vary(col, x, y) * _lit(y * cw + x) * (_occl(x, y) if ao else Color.WHITE),
+		_vary(col, x + 1, y) * _lit(y * cw + x + 1) * (_occl(x + 1, y) if ao else Color.WHITE),
+		_vary(col, x + 1, y + 1) * _lit((y + 1) * cw + x + 1) * (_occl(x + 1, y + 1) if ao else Color.WHITE),
+		_vary(col, x, y + 1) * _lit((y + 1) * cw + x) * (_occl(x, y + 1) if ao else Color.WHITE)]))
 	if overlay != Overlay.NONE:
 		_draw_structure(cv, i, top)
 		return
@@ -643,6 +660,57 @@ func _draw_floodwater(cv: CanvasItem, i: int, top: Vector2) -> void:
 		var o := Vector2((hash_of(i, 11 + k) % 100 - 50) * 0.28, (hash_of(i, 21 + k) % 100 - 50) * 0.12)
 		var c := top + o
 		cv.draw_line(c - Vector2(7, 0), c + Vector2(7, 0), hi, 1.5, true)
+
+
+## Ambient occlusion at a tile corner: ground under a closed canopy or beside buildings is
+## shaded (a little cooler, a little darker). Shared by the four tiles that meet there, so the
+## shade blends smoothly from the wood's heart out to its edge instead of stopping at a diamond.
+func _occl(a: int, b: int) -> Color:
+	var w := world.width
+	var occ := 0.0
+	for o in [Vector2i(-1, -1), Vector2i(0, -1), Vector2i(-1, 0), Vector2i(0, 0)]:
+		var tx: int = a + o.x
+		var ty: int = b + o.y
+		if tx < 0 or ty < 0 or tx >= w or ty >= world.height:
+			continue
+		var j := ty * w + tx
+		var t: int = world.land_type[j]
+		if t == LandType.FOREST and (_deco[j] >> 9) & 1 == 0:
+			occ += 0.25 + 0.25 * mini((_deco[j] >> 6) & 3, 3) / 3.0
+		elif world.structure[j] == WorldState.Structure.SETTLEMENT or world.structure[j] == WorldState.Structure.HOUSE:
+			occ += 0.18
+	occ = minf(occ * 0.25, 0.5)
+	return Color(1.0 - occ * 0.42, 1.0 - occ * 0.34, 1.0 - occ * 0.22, 1.0)
+
+
+## A soft shadow cast toward the lower right (sun at the upper left): a wide faint ellipse with a
+## tighter core, stretched by `reach` (tall things throw longer shadows). Drawn on the ground
+## before the sprites of the tile, so it never darkens a tree or a roof.
+const SHADOW := Color(0.05, 0.10, 0.09, 0.14)
+static var _unit_ellipse := PackedVector2Array()
+
+
+func _cast_shadow(cv: CanvasItem, at: Vector2, rx: float, reach: float) -> void:
+	if _unit_ellipse.is_empty():
+		for k in 14:
+			var an := TAU * k / 14.0
+			_unit_ellipse.append(Vector2(cos(an), sin(an)))
+	var c := at + Vector2(rx * 0.45 * reach, rx * 0.12 * reach)
+	var outer := PackedVector2Array()
+	var inner := PackedVector2Array()
+	for u in _unit_ellipse:
+		outer.append(c + Vector2(u.x * rx * (1.0 + 0.4 * reach), u.y * rx * 0.46))
+		inner.append(c + Vector2(u.x * rx * 0.72 - rx * 0.12, u.y * rx * 0.28))
+	cv.draw_colored_polygon(outer, SHADOW)
+	cv.draw_colored_polygon(inner, SHADOW)
+
+
+## Sprite footprint (world px) and how far its shadow reaches, for the casters.
+func _shadow_for(name: String) -> Vector2:
+	var r: Array = ArtAtlas.R[name]
+	var w: float = r[2] / ArtAtlas.SCALE
+	var h: float = r[3] / ArtAtlas.SCALE
+	return Vector2(w * 0.36, clampf(h / w, 0.6, 2.0))
 
 
 func _vary(col: Color, vx: int, vy: int) -> Color:
@@ -761,17 +829,23 @@ static func _bezier(a: Vector2, c: Vector2, b: Vector2) -> PackedVector2Array:
 	return pts
 
 
-func sprite(cv: CanvasItem, name: String, at: Vector2, mod: Color = Color.WHITE, s: float = 1.0) -> void:
+func sprite(cv: CanvasItem, name: String, at: Vector2, mod: Color = Color.WHITE, s: float = 1.0, flip := false) -> void:
 	var r: Array = ArtAtlas.R[name]
 	var sz := Vector2(r[2], r[3]) / ArtAtlas.SCALE * s
 	var anchor := Vector2(r[4], r[5]) / ArtAtlas.SCALE * s
-	cv.draw_texture_rect_region(ArtAtlas.TEXTURE, Rect2(at - anchor, sz), Rect2(r[0], r[1], r[2], r[3]), mod)
+	if flip:  # a negative width mirrors the region; the anchor mirrors with it
+		cv.draw_texture_rect_region(ArtAtlas.TEXTURE, Rect2(Vector2(at.x + anchor.x, at.y - anchor.y), Vector2(-sz.x, sz.y)),
+			Rect2(r[0], r[1], r[2], r[3]), mod)
+	else:
+		cv.draw_texture_rect_region(ArtAtlas.TEXTURE, Rect2(at - anchor, sz), Rect2(r[0], r[1], r[2], r[3]), mod)
 
 
 func _draw_structure(cv: CanvasItem, i: int, top: Vector2) -> void:
 	var st: int = world.structure[i]
 	match st:
 		WorldState.Structure.SETTLEMENT:
+			if overlay == Overlay.NONE:
+				_cast_shadow(cv, top + Vector2(4, 0), 26.0, 1.0)
 			sprite(cv, "well", top + Vector2(-14, 4))
 			sprite(cv, "hall", top + Vector2(4, 0))
 			sprite(cv, "stall", top + Vector2(-2, 11))
@@ -784,6 +858,12 @@ func _draw_structure(cv: CanvasItem, i: int, top: Vector2) -> void:
 				pole + Vector2(0.5, -16)]), banner_color.darkened(0.35), 1.0, true)
 		WorldState.Structure.HOUSE:
 			var big := world.peak_villagers >= 20 and hash_of(i, 2) % 2 == 0
+			if overlay == Overlay.NONE:
+				if big:
+					_cast_shadow(cv, top + Vector2(0, 2), 22.0, 1.0)
+				else:
+					_cast_shadow(cv, top + Vector2(-8, -2), 15.0, 0.9)
+					_cast_shadow(cv, top + Vector2(8, 5), 15.0, 0.9)
 			if big:
 				sprite(cv, "house_big", top + Vector2(0, 2))
 			else:
@@ -815,6 +895,11 @@ func _draw_farm(cv: CanvasItem, i: int, top: Vector2) -> void:
 				continue
 			var p := top + Vector2((a - b) * 5.2, (a + b) * 2.6 + 1.0)
 			sprite(cv, nm, p, SWAY)
+
+
+## Decoration that throws a ground shadow (grass, flowers and reeds don't).
+const CASTERS := {"pine_a": 1, "pine_b": 1, "pine_c": 1, "oak_a": 1, "oak_b": 1, "oak_c": 1, "bush": 1,
+	"snag": 1, "cottage": 1, "cottage_b": 1, "cottage_c": 1, "rock_a": 1, "rock_b": 1, "goat": 1, "goat_b": 1}
 
 
 ## Slots for decoration inside a tile, back to front (top-relative).
@@ -884,10 +969,29 @@ func _draw_nature(cv: CanvasItem, x: int, y: int, i: int, top: Vector2, deco: in
 		items.append([1, "fire_b", FLICKER])
 	items.sort_custom(func(a: Array, b: Array) -> bool: return SLOTS[a[0]].y < SLOTS[b[0]].y)
 	var used := {}
+	var placed: Array = []  # [name, at, modulate, scale, flip]
 	for it in items:
 		var s: int = it[0]
 		var jitter := Vector2(((hsh >> s) % 5) - 2, 0)
 		if used.has(s):
 			jitter += Vector2(3, 1)
 		used[s] = true
-		sprite(cv, it[1], top + SLOTS[s] + jitter, it[2])
+		var nm: String = it[1]
+		var mod: Color = it[2]
+		var sc := 1.0
+		var flip := false
+		if CASTERS.has(nm) and nm != "goat" and nm != "goat_b":
+			# no two trees alike: size, mirror and a slight shift in leaf colour per tree
+			var hv := hash_of(i * 7 + s, 29)
+			sc = 0.84 + (hv % 33) / 100.0
+			flip = (hv >> 6) & 1 == 1
+			var tone := ((hv >> 8) % 21 - 10) / 100.0
+			mod = Color(1.0 + tone * 0.6, 1.0 + tone * 0.3, 1.0 - tone * 0.4, mod.a)
+		placed.append([nm, top + SLOTS[s] + jitter, mod, sc, flip])
+	if overlay == Overlay.NONE:
+		for p in placed:
+			if CASTERS.has(p[0]):
+				var sh := _shadow_for(p[0]) * Vector2(p[3], p[3])
+				_cast_shadow(cv, p[1], sh.x, sh.y)
+	for p in placed:
+		sprite(cv, p[0], p[1], p[2], p[3], p[4])
