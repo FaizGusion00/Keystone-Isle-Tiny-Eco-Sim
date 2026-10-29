@@ -99,3 +99,43 @@ func test_ambience_is_visual_only() -> void:
 	assert_true(amb.rain >= 0.0 and amb.rain <= 1.0, "rain intensity normalised")
 	amb.free()
 	view.free()
+
+
+func test_ambience_walkers_harvest_burst_and_grade() -> void:
+	var sim := Simulation.create(2024, 32)
+	sim.run(30)
+	var view := _view(sim)
+	var amb := Ambience.new()
+	amb._ready()
+	amb.set_world(view)
+	var ws := sim.world
+	assert_true(ws.settlement_index >= 0, "island has a village")
+	# put a ripe farm next to the hall so walkers have somewhere to go
+	var sc := ws.coords(ws.settlement_index)
+	var f := -1
+	for o in [Vector2i(1, 0), Vector2i(0, 1), Vector2i(-1, 0), Vector2i(0, -1)]:
+		var j := ws.index(sc.x + o.x, sc.y + o.y)
+		if not LandType.is_water(ws.land_type[j]):
+			f = j
+			break
+	ws.structure[f] = WorldState.Structure.FARM
+	ws.crop_growth[f] = 0.9
+	ws.villagers = 12
+	amb.update_from_world()
+	assert_eq(amb.walker_count(), 6, "about one walker per two villagers")
+	ws.villagers = 60
+	amb.update_from_world()
+	assert_eq(amb.walker_count(), Ambience.MAX_WALKERS, "walkers are capped")
+	var b0 := amb.bursts
+	ws.crop_growth[f] = 0.05  # harvested
+	amb.update_from_world()
+	assert_eq(amb.bursts, b0 + 1, "a harvest throws one golden burst")
+	amb.update_from_world()
+	assert_eq(amb.bursts, b0 + 1, "and only once")
+	amb._apply_grade()
+	assert_true(amb._grade.visible, "light grade on the plain map")
+	view.overlay = WorldView.Overlay.WATER
+	amb._apply_grade()
+	assert_false(amb._grade.visible, "data layers stay ungraded")
+	amb.free()
+	view.free()

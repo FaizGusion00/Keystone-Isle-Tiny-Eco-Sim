@@ -216,6 +216,15 @@ b += '<ellipse cx="0" cy="-4" rx="4.2" ry="2.6" fill="#7a6250"/><ellipse cx="0.5
 b += '<rect x="-3" y="-2.4" width=".9" height="3" fill="#3e342c"/><rect x="2" y="-2.4" width=".9" height="3" fill="#3e342c"/>'
 b += '<ellipse cx="4.4" cy="-6" rx="1.6" ry="1.3" fill="#86705c"/><path d="M4.6 -7 L5.5 -8.8" stroke="#5a4e40" stroke-width=".7"/>'
 add("goat_b", b, 14, 12, 7, 10)
+# villagers (walkers): tiny figure, shirt colour varies
+for nm, shirt, pants in [("villager_a", "#d9694a", "#4d4a5c"), ("villager_b", "#4f8fb8", "#5a4a3c"),
+                         ("villager_c", "#e0b84a", "#3f4f46")]:
+    b = shadow(3.2, 1.3, 0, 0.5, 0.22)
+    b += f'<rect x="-1.6" y="-4" width="1.3" height="4" rx=".5" fill="{pants}"/><rect x=".3" y="-4" width="1.3" height="4" rx=".5" fill="{pants}"/>'
+    b += f'<path d="M-2.4 -3.6 Q-2.6 -8.4 0 -8.6 Q2.6 -8.4 2.4 -3.6 Z" fill="{shirt}"/>'
+    b += f'<path d="M0.4 -8.5 Q2.6 -8.3 2.4 -3.6 L0.9 -3.6 Z" fill="{lerp_hex(shirt, "#000000", 0.18)}"/>'
+    b += '<circle cx="0" cy="-10.4" r="2.1" fill="#e8bf98"/><path d="M-2.1 -10.6 Q-1.8 -12.9 0.2 -12.7 Q2.2 -12.6 2.1 -10.4 Q0.4 -11.6 -2.1 -10.6 Z" fill="#5a3e2c"/>'
+    add(nm, b, 9, 15, 4.5, 13.5)
 # fish leaping
 b = '<path d="M-6 0 Q-3 -2 0 0 Q3 2 6 0" stroke="#e8f4f6" stroke-width="1" fill="none" opacity=".8"/>'
 b += '<path d="M-3 -2 Q0 -9 4 -5 L5 -3 Q1 -6 -2 -1 Z" fill="#c9dbe0"/><path d="M4 -5 L7 -7 L6 -3 Z" fill="#a9c2ca"/>'

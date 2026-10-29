@@ -191,6 +191,7 @@ var _coach_i := -1
 
 
 func _ready() -> void:
+	layer = 2  # above the world effects layer (rain, light grade) and below full screens (10)
 	root = Control.new()
 	root.name = "HudRoot"
 	root.mouse_filter = Control.MOUSE_FILTER_IGNORE

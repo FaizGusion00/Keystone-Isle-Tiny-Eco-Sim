@@ -21,6 +21,7 @@ const MAX_H := BASE_H + RELIEF * (1.0 - IslandGenerator.SHALLOW_MAX)
 
 const SWAY := Color(1, 1, 1, 254.0 / 255.0)
 const FLICKER := Color(1, 1, 1, 253.0 / 255.0)
+const GRAZE := Color(1, 1, 1, 252.0 / 255.0)
 
 ## Muted, soft palette (tops).
 const BASE_COLORS := [
@@ -963,7 +964,7 @@ func _draw_nature(cv: CanvasItem, x: int, y: int, i: int, top: Vector2, deco: in
 	if t == LandType.FOREST and world.land_cause[i] >= 0 and events != null and events.type_of(world.land_cause[i]) == EventLog.Type.TREES_PLANTED and veg < 2:
 		items = [[1, "sapling", SWAY], [4, "sapling", SWAY], [6, "sapling", SWAY]]
 	if goat:
-		items.append([(hsh >> 11) % SLOTS.size(), "goat" if hsh % 3 else "goat_b", Color.WHITE])
+		items.append([(hsh >> 11) % SLOTS.size(), "goat" if hsh % 3 else "goat_b", Color(1, 1, 0.94 + 0.06 * ((hsh >> 4) % 16) / 15.0, GRAZE.a)])
 	if burning:
 		items.append([3, "fire_a", FLICKER])
 		items.append([1, "fire_b", FLICKER])

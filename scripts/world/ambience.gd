@@ -3,7 +3,9 @@ extends Node2D
 ## Atmosphere around the island, all purely visual and driven by sim state:
 ## season/weather colour grading (CanvasModulate), drifting cloud shadows, rain particles,
 ## leaping fish (more fish => more leaps, muddy water => fewer), a bobbing boat by the village,
-## smoke over wildfires, and one-shot "pop" rings when the player changes a tile.
+## smoke and embers over wildfires, a golden burst over a farm when it is harvested, villagers
+## strolling between the hall, houses and fields, a low-sun light grade that warms through the
+## year, and one-shot "pop" rings when the player changes a tile.
 ## Uses its own RandomNumberGenerator so it never touches simulation randomness.
 
 const CLOUD_TEX := preload("res://assets/art/cloud.png")
@@ -12,6 +14,13 @@ const DROP_TEX := preload("res://assets/art/raindrop.png")
 ## Colour grade per season (Spring, Rainy, Summer, Dry).
 const SEASON_TINT := [Color(1.0, 1.0, 1.0), Color(0.93, 0.97, 1.0), Color(1.0, 0.99, 0.95), Color(1.0, 0.95, 0.86)]
 const RAIN_TINT := Color(0.80, 0.85, 0.90)
+const DOT_TEX := preload("res://assets/art/soft_dot.png")
+const GRADE_SHADER := preload("res://shaders/grade.gdshader")
+## Low-sun light per season (warm glow colour + strength): fresh spring, grey rains, bright
+## summer, golden dry season. Rain mutes it.
+const SEASON_SUN := [Color(1.0, 0.92, 0.74, 0.10), Color(0.86, 0.92, 1.0, 0.05),
+	Color(1.0, 0.88, 0.62, 0.13), Color(1.0, 0.74, 0.42, 0.18)]
+const MAX_WALKERS := 10
 
 var view: WorldView
 var reduce_motion := false
@@ -30,6 +39,12 @@ var _smoke_timer := 0.0
 var _boat: Sprite2D
 var _boat_base := Vector2.ZERO
 var _t := 0.0
+var _grade: ColorRect
+var _sun := Color(1, 1, 1, 0)
+var _sun_target := Color(1, 1, 1, 0)
+var _walkers: Array = []        ## [Sprite2D, from, to, progress, pause, speed]
+var bursts := 0                ## particle bursts fired (harvest/embers), for tests and stats
+var _farm_growth := {}          ## farm tile -> last crop growth (harvest detection)
 
 
 func _ready() -> void:
@@ -47,6 +62,14 @@ func _ready() -> void:
 	_rain_layer = CanvasLayer.new()
 	_rain_layer.layer = 1
 	add_child(_rain_layer)
+	_grade = ColorRect.new()
+	_grade.name = "Grade"
+	_grade.set_anchors_preset(Control.PRESET_FULL_RECT)
+	_grade.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	var gm := ShaderMaterial.new()
+	gm.shader = GRADE_SHADER
+	_grade.material = gm
+	_rain_layer.add_child(_grade)
 	_rain = CPUParticles2D.new()
 	_rain.texture = DROP_TEX
 	_rain.emitting = false
@@ -98,6 +121,10 @@ func set_world(v: WorldView) -> void:
 	var b := Iso.map_bounds(ws.width, ws.height)
 	for s in _clouds:
 		s.position = view.position + Vector2(_rng.randf_range(b.position.x, b.end.x), _rng.randf_range(b.position.y, b.end.y))
+	_farm_growth.clear()
+	for w in _walkers:
+		w[0].queue_free()
+	_walkers.clear()
 	update_from_world(true)
 
 
@@ -110,10 +137,146 @@ func update_from_world(snap := false) -> void:
 	var season := Simulation.season_of(ws.tick)
 	_tint_target = (SEASON_TINT[season] as Color).lerp(RAIN_TINT, _rain_target * 0.7)
 	view.set_wind(1.0 + _rain_target * 1.5)
+	var sun: Color = SEASON_SUN[season]
+	_sun_target = Color(sun.r, sun.g, sun.b, sun.a * (1.0 - 0.75 * _rain_target))
+	_check_harvests(snap)
+	_sync_walkers()
 	if snap:
 		rain = _rain_target
 		_tint = _tint_target
 		_modulate.color = _tint
+		_sun = _sun_target
+		_apply_grade()
+
+
+func _apply_grade() -> void:
+	var m := _grade.material as ShaderMaterial
+	var data_view := view != null and view.overlay != WorldView.Overlay.NONE
+	_grade.visible = not data_view
+	m.set_shader_parameter("warm", _sun)
+	m.set_shader_parameter("cool", Color(0.07, 0.12, 0.18, 0.16 + 0.08 * rain))
+
+
+## A farm whose crop went from ripe to bare since the last tick was just harvested: a burst of
+## golden chaff over it.
+func _check_harvests(snap: bool) -> void:
+	var ws := view.world
+	var seen := {}
+	for i in ws.tile_count():
+		if ws.structure[i] != WorldState.Structure.FARM:
+			continue
+		var g := ws.crop_growth[i]
+		seen[i] = true
+		if not snap and _farm_growth.get(i, 0.0) >= 0.7 and g < 0.25 and not reduce_motion:
+			var c := ws.coords(i)
+			burst(view.position + view.top_center(c.x, c.y) + Vector2(0, 14), Color(1.0, 0.86, 0.38), Color(0.95, 0.66, 0.22), 18, 1.1)
+		_farm_growth[i] = g
+	for k in _farm_growth.keys():
+		if not seen.has(k):
+			_farm_growth.erase(k)
+
+
+## One-shot particle burst (harvest chaff, fire embers). Frees itself.
+func burst(at: Vector2, c0: Color, c1: Color, n: int, life: float, rise := 46.0) -> void:
+	bursts += 1
+	if not is_inside_tree():
+		return
+	var p := CPUParticles2D.new()
+	p.texture = DOT_TEX
+	p.one_shot = true
+	p.explosiveness = 0.85
+	p.amount = n
+	p.lifetime = life
+	p.position = at
+	p.z_index = 25
+	p.emission_shape = CPUParticles2D.EMISSION_SHAPE_SPHERE
+	p.emission_sphere_radius = 9.0
+	p.direction = Vector2(0, -1)
+	p.spread = 55.0
+	p.initial_velocity_min = rise * 0.5
+	p.initial_velocity_max = rise
+	p.gravity = Vector2(0, 40)
+	p.scale_amount_min = 0.12
+	p.scale_amount_max = 0.22
+	var ramp := Gradient.new()
+	ramp.set_color(0, c0)
+	ramp.set_color(1, Color(c1.r, c1.g, c1.b, 0.0))
+	p.color_ramp = ramp
+	add_child(p)
+	p.emitting = true
+	get_tree().create_timer(life + 0.3).timeout.connect(p.queue_free)
+
+
+## Villagers out and about: about one walker per two people (up to 10), strolling between the
+## hall, houses and fields. Purely cosmetic and seeded from the ambience RNG.
+func _walk_spots() -> PackedVector2Array:
+	var ws := view.world
+	var out := PackedVector2Array()
+	for i in ws.tile_count():
+		var st := ws.structure[i]
+		if st == WorldState.Structure.SETTLEMENT or st == WorldState.Structure.HOUSE or st == WorldState.Structure.FARM:
+			var c := ws.coords(i)
+			out.append(view.position + view.top_center(c.x, c.y) + Vector2(0, 16))
+	return out
+
+
+func walker_count() -> int:
+	return _walkers.size()
+
+
+func _sync_walkers() -> void:
+	var ws := view.world
+	var want := mini(MAX_WALKERS, int(ws.villagers / 2.0)) if ws.settlement_index >= 0 else 0
+	if want == _walkers.size():
+		return
+	var spots := _walk_spots()
+	if spots.size() < 2:
+		want = 0
+	while _walkers.size() > want:
+		_walkers.pop_back()[0].queue_free()
+	while _walkers.size() < want:
+		var sp := Sprite2D.new()
+		sp.texture = ArtAtlas.TEXTURE
+		sp.region_enabled = true
+		var nm: String = ["villager_a", "villager_b", "villager_c"][_walkers.size() % 3]
+		var r: Array = ArtAtlas.R[nm]
+		sp.region_rect = Rect2(r[0], r[1], r[2], r[3])
+		sp.scale = Vector2.ONE / ArtAtlas.SCALE
+		sp.offset = Vector2(r[2] * 0.5 - r[4], r[3] * 0.5 - r[5])
+		sp.z_index = 1
+		add_child(sp)
+		var a := spots[_rng.randi_range(0, spots.size() - 1)] + _jitter()
+		sp.position = a
+		_walkers.append([sp, a, a, 1.0, _rng.randf_range(0.0, 2.5), _rng.randf_range(7.0, 11.0)])
+
+
+func _jitter() -> Vector2:
+	return Vector2(_rng.randf_range(-12, 12), _rng.randf_range(-5, 5))
+
+
+func _move_walkers(delta: float) -> void:
+	if _walkers.is_empty() or reduce_motion:
+		return
+	var spots: PackedVector2Array
+	for w in _walkers:
+		var sp: Sprite2D = w[0]
+		if w[3] >= 1.0:
+			w[4] -= delta
+			sp.position = w[2]
+			if w[4] > 0.0:
+				continue
+			if spots.is_empty():
+				spots = _walk_spots()
+				if spots.is_empty():
+					return
+			w[1] = w[2]
+			w[2] = spots[_rng.randi_range(0, spots.size() - 1)] + _jitter()
+			w[3] = 0.0
+			w[4] = _rng.randf_range(1.0, 4.0)
+			sp.flip_h = w[2].x < w[1].x
+		var dist := maxf(1.0, (w[2] - w[1]).length())
+		w[3] = minf(1.0, w[3] + delta * w[5] / dist)
+		sp.position = w[1].lerp(w[2], w[3]) + Vector2(0, -absf(sin(w[3] * dist * 0.45)) * 0.9)
 
 
 func _process(delta: float) -> void:
@@ -124,6 +287,9 @@ func _process(delta: float) -> void:
 	rain = lerpf(rain, _rain_target, k)
 	_tint = _tint.lerp(_tint_target, k)
 	_modulate.color = _tint
+	_sun = _sun.lerp(_sun_target, k)
+	_apply_grade()
+	_move_walkers(delta)
 	# rain particles cover the screen
 	var vs := get_viewport_rect().size
 	_rain.position = Vector2(vs.x * 0.5, -40)
@@ -163,7 +329,10 @@ func _process(delta: float) -> void:
 				var j := _rng.randi_range(0, ws2.tile_count() - 1)
 				if ws2.fire[j] != 0:
 					var c2 := ws2.coords(j)
-					_spawn_sprite("smoke", view.position + view.top_center(c2.x, c2.y) + Vector2(_rng.randf_range(-8, 8), -10), 30, 2.4, Vector2(_rng.randf_range(4, 14), -40))
+					var at := view.position + view.top_center(c2.x, c2.y)
+					_spawn_sprite("smoke", at + Vector2(_rng.randf_range(-8, 8), -10), 30, 2.4, Vector2(_rng.randf_range(4, 14), -40))
+					if not reduce_motion:
+						burst(at + Vector2(0, 2), Color(1.0, 0.82, 0.36), Color(0.95, 0.32, 0.12), 6, 1.0, 60.0)
 					break
 
 
