@@ -683,6 +683,10 @@ func _build_objectives() -> void:
 		if not _obj_collapsed:
 			_arm_goal_collapse(2.0))  # opened by hand: stay open a while longer
 	head.add_child(_obj_chev)
+	_obj_card.gui_input.connect(func(e: InputEvent) -> void:
+		if _obj_collapsed and e is InputEventMouseButton and (e as InputEventMouseButton).pressed \
+				and (e as InputEventMouseButton).button_index == MOUSE_BUTTON_LEFT:
+			_obj_chev.pressed.emit())  # the whole pill opens the goals, not only the chevron
 	_obj_rows = UiKit.vbox(6)
 	col.add_child(_obj_rows)
 	_obj_footer = UiKit.label("", 0, "Caption")
@@ -701,10 +705,28 @@ func set_goals_collapsed(on: bool) -> void:
 	_obj_footer.visible = not on and _obj_footer.text != ""
 	_obj_summary.visible = on and _obj_summary.text != ""
 	_obj_chev.icon = UiKit.icon_tex("chevron-right" if on else "chevron-down")
+	_style_goals_pill(on)
 	_obj_chev.tooltip_text = "Show goals" if on else "Hide goals"
 	relayout()
 	if _obj_card.visible:
 		UiKit.appear(_obj_card, Vector2.ZERO, 0.18)
+
+
+## Folded, the card becomes a slim pill: same paper, round ends, almost no vertical padding
+## (the 44 px chevron still sets the touch height) and a smaller title.
+func _style_goals_pill(on: bool) -> void:
+	if on:
+		var sb := (_obj_card.get_theme_stylebox("panel", "Card") as StyleBoxFlat).duplicate() as StyleBoxFlat
+		sb.set_corner_radius_all(24)
+		sb.content_margin_top = 2
+		sb.content_margin_bottom = 2
+		sb.content_margin_left = 14
+		sb.content_margin_right = 4
+		_obj_card.add_theme_stylebox_override("panel", sb)
+		_obj_title.add_theme_font_size_override("font_size", 16)
+	else:
+		_obj_card.remove_theme_stylebox_override("panel")
+		_obj_title.add_theme_font_size_override("font_size", 19)
 
 
 func goals_collapsed() -> bool:

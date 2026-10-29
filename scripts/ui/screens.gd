@@ -470,14 +470,26 @@ func _hash_seed(tx: String) -> int:
 # ================================================================== settings
 
 func _settings(sz: Vector2) -> Control:
-	var parts := _sheet(sz, "Settings", "settings", 680.0)
+	var wide := _two_col(sz)
+	var parts := _sheet(sz, "Settings", "settings", 1080.0 if wide else 680.0)
 	var body: VBoxContainer = parts[2]
+	var right := body
+	if wide:
+		# landscape: Sound + Play on the left, Display on the right, so nothing needs scrolling
+		var cols := UiKit.hbox(16)
+		body.add_child(cols)
+		body = UiKit.vbox(12)
+		right = UiKit.vbox(12)
+		for v in [body, right]:
+			v.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+			v.size_flags_stretch_ratio = 1.0
+			cols.add_child(v)
 	var st: GameSettings = main.settings
 	var a := _section(body, "Sound", "volume-2")
 	for it in [["master_volume", "Master", "volume-2"], ["music_volume", "Music", "sparkles"],
 			["sfx_volume", "Effects", "mouse-pointer-click"], ["ambience_volume", "Sea & rain", "waves"]]:
 		a.add_child(_slider_row(it[2], it[1], str(it[0]), float(st.get_value(it[0]))))
-	var d := _section(body, "Display", "monitor-smartphone")
+	var d := _section(right, "Display", "monitor-smartphone")
 	var cur := UI_SCALES.find(_closest_scale(float(st.get_value("ui_scale"))))
 	var scale_seg := UiKit.segmented(["S", "M", "L", "XL"], cur, func(k: int) -> void: main.change_setting("ui_scale", UI_SCALES[k]))
 	scale_seg.custom_minimum_size.x = 220
@@ -494,6 +506,11 @@ func _settings(sz: Vector2) -> Control:
 	var lang := UiKit.segmented(["English"], 0, func(_k: int) -> void: pass)
 	_row(c, "languages", "Language", lang, "More languages coming; all text is ready for translation.")
 	return _fit_sheet(parts, sz)
+
+
+## Landscape sheets wide enough for two columns of rows.
+func _two_col(sz: Vector2) -> bool:
+	return not portrait and sz.x >= 1000.0
 
 
 func _closest_scale(v: float) -> float:
@@ -735,7 +752,7 @@ func _check_line(ok: bool, text: String) -> HBoxContainer:
 func _achievements(sz: Vector2) -> Control:
 	var parts := _sheet(sz, "Journal", "book-open", 900.0)
 	var body: VBoxContainer = parts[2]
-	body.add_child(_journal_tabs(2))
+	_add_journal_tabs(parts, 2, sz)
 	var pr: Progress = main.progress
 	body.add_child(UiKit.label("%d of %d earned" % [pr.achievements.size(), Achievements.LIST.size()], 0, "Caption"))
 	var grid := GridContainer.new()
@@ -884,10 +901,19 @@ func _journal_tabs(sel: int) -> Control:
 	return tabs
 
 
+## Journal tabs: in landscape they ride in the sheet header beside the title (one row less to
+## scroll); in portrait they head the body.
+func _add_journal_tabs(parts: Array, sel: int, sz: Vector2) -> void:
+	if _two_col(sz):
+		(parts[4] as Control).add_child(_journal_tabs(sel))
+	else:
+		(parts[2] as Control).add_child(_journal_tabs(sel))
+
+
 func _journal(sz: Vector2) -> Control:
 	var parts := _sheet(sz, "Journal", "book-open", 900.0)
 	var body: VBoxContainer = parts[2]
-	body.add_child(_journal_tabs(0))
+	_add_journal_tabs(parts, 0, sz)
 	var pr: Progress = main.progress
 	# level card
 	var lc := UiKit.card("InsetTeal")
@@ -932,12 +958,21 @@ func _journal(sz: Vector2) -> Control:
 	for b in ContentDB.banners():
 		bf.add_child(_banner_chip(b, pr))
 	# prestige
-	var ps := _section(body, "Prestige", "rotate-ccw")
-	ps.add_child(UiKit.wrap_label("At level %d you may start a new prestige: your level returns to 1, every later run earns 10%% more XP, "
+	var ps: Container = _section(body, "Prestige", "rotate-ccw")
+	var ps_text: Container = ps
+	if _two_col(sz):  # landscape: the button sits beside its explanation
+		var ph := UiKit.hbox(14)
+		ps.add_child(ph)
+		ps_text = UiKit.vbox(0)
+		ps_text.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		ph.add_child(ps_text)
+		ps = ph
+	ps_text.add_child(UiKit.wrap_label("At level %d you may start a new prestige: your level returns to 1, every later run earns 10%% more XP, "
 		% int(ContentDB.mode("xp").get("prestige_level", 10)) + "and the Deep sea banner unlocks. Stars, medals, bests, codex and banners are kept.", "Caption"))
 	var pb := UiKit.button("Tap again to confirm" if _prestige_armed else "Prestige now", Vector2(0, 54), "rotate-ccw",
 		"Primary" if _prestige_armed else "")
 	pb.size_flags_horizontal = Control.SIZE_SHRINK_END
+	pb.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 	pb.disabled = not pr.can_prestige()
 	pb.pressed.connect(func() -> void:
 		if not _prestige_armed:
@@ -988,7 +1023,7 @@ func _unlock_text(u: Dictionary) -> String:
 func _codex(sz: Vector2) -> Control:
 	var parts := _sheet(sz, "Journal", "book-open", 900.0)
 	var body: VBoxContainer = parts[2]
-	body.add_child(_journal_tabs(1))
+	_add_journal_tabs(parts, 1, sz)
 	var pr: Progress = main.progress
 	body.add_child(UiKit.wrap_label("Wildlife and rare events you have witnessed. They appear on Daily, Weekly and Endless islands, "
 		+ "or in a New world with rare events turned on.", "Caption"))

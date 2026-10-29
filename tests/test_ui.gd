@@ -215,6 +215,9 @@ func test_goals_card_folds_to_a_pill() -> void:
 	assert_false(main.hud.goals_collapsed(), "the chevron opens it again")
 	main.hud.world_touched()
 	assert_true(main.hud.goals_collapsed(), "playing on the map tucks it away")
+	main.hud._obj_card.reset_size()
+	assert_true(main.hud._obj_card.get_combined_minimum_size().y <= 56.0, "the folded pill is slim (was 76 px)")
+	assert_true(main.hud._obj_chev.get_combined_minimum_size().y >= 44.0, "its chevron keeps a 44 px touch target")
 	_free(main)
 
 
