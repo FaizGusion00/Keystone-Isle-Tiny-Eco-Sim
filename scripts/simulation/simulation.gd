@@ -107,6 +107,13 @@ const DAM_FISH_PENALTY := 0.12    ## fish habitat lost per dam on a stream (bloc
 const RIVER_DAM_AREA := 20       ## a dam on a stream this big blocks fish runs
 # Hazards (M6)
 const FLOOD_DEPTH := 0.6         ## surface water on a built tile that counts as a flood
+const FLOOD_STAGE := 0.22        ## river stage (flow / sqrt(catchment)) at which a river overtops its banks
+const FLOODPLAIN_AREA := 12      ## streams with at least this catchment have a floodplain
+const FLOODPLAIN_RISE := 0.035   ## banks up to this much higher than the river can flood
+const FLOODPLAIN_STAGE_PER_RISE := 0.15 ## extra stage needed per FLOODPLAIN_RISE of bank height
+const FLOOD_WATER := 0.35        ## water spread over a flooded floodplain tile (visible, soaks soil)
+const FLOOD_SILT := 0.03         ## topsoil a river flood leaves behind
+const VEG_RUNOFF_SLOW := 0.1     ## dense vegetation holds back this share of runoff each day
 const FLOOD_COOLDOWN := 15
 const FLOOD_FOOD_LOSS := 0.15
 const FLOOD_CAUSE_WINDOW := 120
@@ -133,6 +140,8 @@ var _sed_next := PackedFloat32Array()
 var _nbr := PackedInt32Array()   ## 4 neighbour indices per tile, -1 outside the map
 var _down := PackedInt32Array()  ## steepest-descent neighbour by terrain elevation (-1 = pit)
 var upstream_area := PackedInt32Array() ## tiles draining through each tile (static, for rivers)
+## Static floodplain map: the river tile whose overflow reaches this tile (-1 = never floods from a river).
+var floodplain := PackedInt32Array()
 var _veg_cap := PackedFloat32Array()
 var _erodibility := PackedFloat32Array()
 var _dams := PackedInt32Array()  ## derived: indices of dam tiles (rebuilt on structure change)
@@ -220,6 +229,64 @@ func _compute_drainage() -> void:
 		var d := _down[i]
 		if d >= 0 and world.land_type[i] > LandType.SHALLOW_WATER:
 			upstream_area[d] += upstream_area[i]
+	_compute_floodplain()
+
+
+## Low land beside a sizeable stream floods when the stream overtops its banks. Static.
+func _compute_floodplain() -> void:
+	var n := world.tile_count()
+	var w := world.width
+	var h := world.height
+	var elev := world.elevation
+	var lt := world.land_type
+	floodplain.resize(n)
+	floodplain.fill(-1)
+	for i in n:
+		if lt[i] <= LandType.SHALLOW_WATER:
+			continue
+		if upstream_area[i] >= FLOODPLAIN_AREA:
+			floodplain[i] = i
+			continue
+		var x := i % w
+		@warning_ignore("integer_division")
+		var y := i / w
+		var best := -1
+		for dy in range(-1, 2):
+			for dx in range(-1, 2):
+				var xx := x + dx
+				var yy := y + dy
+				if (dx == 0 and dy == 0) or xx < 0 or yy < 0 or xx >= w or yy >= h:
+					continue
+				var j := yy * w + xx
+				if lt[j] > LandType.SHALLOW_WATER and upstream_area[j] >= FLOODPLAIN_AREA \
+						and elev[i] <= elev[j] + FLOODPLAIN_RISE \
+						and (best < 0 or upstream_area[j] > upstream_area[best]):
+					best = j
+		floodplain[i] = best
+
+
+## River stage at a stream tile: smoothed flow relative to what its channel normally carries.
+func river_stage(r: int) -> float:
+	if r < 0:
+		return 0.0
+	return world.flow[r] / sqrt(float(upstream_area[r]))
+
+
+## Stage at which floodplain tile i goes under (higher banks need a bigger flood). INF if never.
+func flood_stage_for(i: int) -> float:
+	var r := floodplain[i] if i >= 0 and i < floodplain.size() else -1
+	if r < 0:
+		return INF
+	var rise := maxf(world.elevation[i] - world.elevation[r], 0.0)
+	return FLOOD_STAGE + FLOODPLAIN_STAGE_PER_RISE * rise / FLOODPLAIN_RISE
+
+
+## 0 = safe, 1 = low risk (only big storms), 2 = floods in a normal rainy season.
+func flood_risk(i: int) -> int:
+	var need := flood_stage_for(i)
+	if need == INF:
+		return 0
+	return 2 if need < FLOOD_STAGE + 0.09 else 1
 
 
 ## Advance exactly one tick. Fixed system order.
@@ -345,7 +412,8 @@ func _water_flow_and_erosion() -> void:
 			sn[i] += si - dep
 			flow[i] *= 0.9
 			continue
-		var move := wi * FLOW_MAX_FRACTION if best_h < 0.0 else minf(wi * FLOW_MAX_FRACTION, (hi - best_h) * 0.5)
+		var frac_max := FLOW_MAX_FRACTION * (1.0 - VEG_RUNOFF_SLOW * veg[i])
+		var move := wi * frac_max if best_h < 0.0 else minf(wi * frac_max, (hi - best_h) * 0.5)
 		var slope := clampf((elev[i] - elev[best]) * 12.0, 0.0, 1.0) + 0.1
 		var bare := 1.0 - veg[i]
 		var detach := minf(ERODE_K * erod[lt[i]] * move * slope * bare * bare * bare, soil[i])
@@ -779,6 +847,16 @@ func _burn_out(i: int) -> void:
 	world.last_event[i] = world.fire_event
 
 
+## A river flood knocks a growing crop back by `share` (records HARVEST_LOST if it was well grown).
+func _damage_harvest(i: int, cause: int, share: float) -> void:
+	var c := world.coords(i)
+	if world.crop_growth[i] > 0.25:
+		var id := events.record(world.tick, EventLog.Type.HARVEST_LOST, c.x, c.y, world.crop_growth[i] * share, cause)
+		world.last_event[i] = id
+		world.crop_failure_event = id
+	world.crop_growth[i] *= 1.0 - share
+
+
 func _lose_harvest(i: int, cause: int) -> void:
 	var c := world.coords(i)
 	if world.crop_growth[i] > 0.25:
@@ -789,39 +867,56 @@ func _lose_harvest(i: int, cause: int) -> void:
 
 
 @warning_ignore("integer_division")
-## Floods: deep standing water on a farm, house or the village. Causes: the heavy rain that
-## just fell and bare/cleared land upstream that let the water run off.
+## Floods hit farms, houses and the village when (a) deep runoff pools on the tile, or (b) the
+## stream it sits beside overtops its banks: river stage (flow / sqrt(catchment)) above the
+## tile's flood stage. Forests upstream slow runoff and dams store the peak, so both lower the
+## stage. Causes: the heavy rain that just fell and bare/cleared land upstream.
 func _floods() -> void:
 	var st := world.structure
 	var water := world.surface_water
 	var ft := world.flood_tick
 	var tick := world.tick
 	var w := world.width
+	var fp := floodplain
 	for i in st.size():
 		var s := st[i]
 		if s == WorldState.Structure.NONE or s == WorldState.Structure.DAM:
 			continue
-		if water[i] < FLOOD_DEPTH or tick - ft[i] < FLOOD_COOLDOWN:
+		if tick - ft[i] < FLOOD_COOLDOWN:
+			continue
+		var r := fp[i]
+		var overbank := r >= 0 and river_stage(r) >= flood_stage_for(i)
+		if water[i] < FLOOD_DEPTH and not overbank:
 			continue
 		ft[i] = tick
+		var depth := water[i]
+		if overbank:
+			depth = maxf(depth, FLOOD_WATER + (river_stage(r) - flood_stage_for(i)))
+			water[i] = maxf(water[i], FLOOD_WATER)
 		var rain := _recent(world.heavy_rain_event, tick, RAIN_CAUSE_WINDOW)
-		var bare := _upstream_bare(i, tick)
-		var id := events.record(tick, EventLog.Type.FLOOD, i % w, i / w, water[i], rain, bare)
+		var bare := _upstream_bare(r if overbank else i, tick)
+		var id := events.record(tick, EventLog.Type.FLOOD, i % w, i / w, depth, rain, bare)
 		world.flood_event = id
 		world.last_event[i] = id
 		world.floods += 1
+		if overbank:
+			# floodwater drops fresh silt: floodplains are fertile, which is why people farm them
+			world.soil_depth[i] = minf(world.soil_depth[i] + FLOOD_SILT, 1.0)
 		if s == WorldState.Structure.FARM:
-			_lose_harvest(i, id)
+			if overbank and water[i] < FLOOD_DEPTH:
+				_damage_harvest(i, id, 0.5)
+			else:
+				_lose_harvest(i, id)
 		else:
 			world.food_store *= 1.0 - FLOOD_FOOD_LOSS
 
 
-## Most recent clearing / burn event among tiles draining into i (up to 3 steps upstream).
+## Most recent clearing / burn event among tiles draining into i (up to 6 steps upstream).
 func _upstream_bare(i: int, tick: int) -> int:
 	var best := -1
 	var best_t := -1
 	var frontier := [i]
-	for depth in 3:
+	for depth in 6:
 		var next := []
 		for t in frontier:
 			for k in 4:

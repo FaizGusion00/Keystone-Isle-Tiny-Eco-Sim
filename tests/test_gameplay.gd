@@ -289,7 +289,67 @@ func test_hazard_runs_are_deterministic() -> void:
 	var d := ScenarioCatalog.get_def("tinderbox")
 	var a := ScenarioCatalog.create_sim(d)
 	var b := ScenarioCatalog.create_sim(d)
-	a.run(240)
-	b.run(240)
+	a.run(360)
+	b.run(360)
 	assert_eq(a.state_checksum(), b.state_checksum())
 	assert_true(a.world.fires > 0, "tinderbox had a fire")
+
+
+func test_river_overbank_floods_floodplain_farms() -> void:
+	var sim := ScenarioCatalog.create_sim(ScenarioCatalog.get_def("floodplain"))
+	var ws := sim.world
+	ws.free_build = true
+	# high ground away from rivers never floods from a river
+	var safe := 0
+	var low := -1
+	for i in ws.tile_count():
+		if ws.land_type[i] <= LandType.SHALLOW_WATER:
+			continue
+		if sim.floodplain[i] < 0:
+			safe += 1
+			assert_eq(sim.flood_risk(i), 0)
+		elif low < 0 and sim.flood_risk(i) == 2 and sim.upstream_area[i] < Simulation.FLOODPLAIN_AREA:
+			var c := ws.coords(i)
+			if sim.apply_action(A.BUILD_FARM, c.x, c.y):
+				low = i
+	assert_true(safe > 0, "most of the island is not floodplain")
+	assert_true(low >= 0, "a low-bank farm site exists")
+	var r := sim.floodplain[low]
+	assert_true(sim.flood_stage_for(low) >= Simulation.FLOOD_STAGE, "banks need at least bankfull")
+	# force a big flow down the river: the low bank floods with a cause, drops silt
+	ws.flow[r] = (sim.flood_stage_for(low) + 0.1) * sqrt(float(sim.upstream_area[r]))
+	ws.soil_depth[low] = 0.5
+	var soil := ws.soil_depth[low]
+	ws.crop_growth[low] = 0.6
+	sim._floods()
+	assert_eq(ws.flood_tick[low], ws.tick, "overbank flood recorded on the farm")
+	assert_true(ws.soil_depth[low] > soil, "flood leaves silt")
+	assert_true(ws.crop_growth[low] < 0.6 and ws.crop_growth[low] > 0.0, "river flood damages, not wipes, the crop")
+	assert_true(ws.surface_water[low] >= Simulation.FLOOD_WATER - 0.001, "flood water is visible")
+	# a year on the floodplain with farms on the low banks sees real floods
+	var more := 3
+	for i in ws.tile_count():
+		if more > 0 and sim.flood_risk(i) == 2:
+			var c := ws.coords(i)
+			if sim.apply_action(A.BUILD_FARM, c.x, c.y):
+				more -= 1
+	sim.run(360)
+	assert_true(ws.floods >= 2, "floodplain farms flood several times a year (%d)" % ws.floods)
+
+
+func test_forest_slows_runoff() -> void:
+	var a := ScenarioCatalog.create_sim(ScenarioCatalog.get_def("floodplain"))
+	var b := ScenarioCatalog.create_sim(ScenarioCatalog.get_def("floodplain"))
+	for i in b.world.tile_count():
+		if b.world.land_type[i] > LandType.SHALLOW_WATER:
+			b.world.vegetation_cover[i] = 0.0
+	var pa := 0.0
+	var pb := 0.0
+	for t in 120:
+		a.step()
+		b.step()
+		for i in a.world.tile_count():
+			if a.upstream_area[i] >= 40:
+				pa = maxf(pa, a.river_stage(i))
+				pb = maxf(pb, b.river_stage(i))
+	assert_true(pa < pb, "a forested island's rivers peak lower (%.3f vs bare %.3f)" % [pa, pb])
