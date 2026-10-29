@@ -28,12 +28,9 @@ func _process(delta: float) -> void:
 func _draw() -> void:
 	if tile.x < 0:
 		return
-	var h := 0.0
-	if view != null and view.world != null and view.world.in_bounds(tile.x, tile.y):
-		h = view.heights[tile.y * view.world.width + tile.x]
 	var poly := Iso.tile_polygon(tile.x, tile.y)
-	for k in poly.size():
-		poly[k].y -= h
+	if view != null and view.world != null and view.world.in_bounds(tile.x, tile.y):
+		poly = view.top_polygon(tile.x, tile.y) # follows the sloped ground
 	draw_colored_polygon(poly, Color(color, 0.22))
 	var outline := poly.duplicate()
 	outline.append(poly[0])

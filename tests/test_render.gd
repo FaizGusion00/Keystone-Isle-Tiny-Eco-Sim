@@ -1,5 +1,5 @@
 extends TestCase
-## Diorama renderer: terraced heights, height-aware picking, stable dirty keys, art atlas,
+## Diorama renderer: smooth shared-corner heights, height-aware picking, stable dirty keys, art atlas,
 ## and that the purely visual ambience never touches simulation state.
 
 
@@ -10,7 +10,7 @@ func _view(sim: Simulation) -> WorldView:
 	return view
 
 
-func test_heights_terraced_and_water_flat() -> void:
+func test_heights_smooth_and_water_flat() -> void:
 	var sim := Simulation.create(2024, 32)
 	var view := _view(sim)
 	var ws := sim.world
@@ -21,10 +21,24 @@ func test_heights_terraced_and_water_flat() -> void:
 			assert_eq(h, 0.0, "water is flat")
 		else:
 			assert_true(h >= WorldView.BASE_H, "land sits above water")
-			assert_near(fmod(h - WorldView.BASE_H, WorldView.STEP), 0.0, 1e-3, "heights snap to terraces")
+			var c := ws.coords(i)
+			var poly := view.top_polygon(c.x, c.y)
+			var mid := Vector2.ZERO
+			for p in poly:
+				mid += p * 0.25
+			assert_near(mid.y, view.top_center(c.x, c.y).y, 1e-3, "a tile's centre sits on its sloped top")
+			if c.x + 1 < ws.width and not LandType.is_water(ws.land_type[i + 1]):
+				var q := view.top_polygon(c.x + 1, c.y)
+				assert_true(poly[1].is_equal_approx(q[0]) and poly[2].is_equal_approx(q[3]), "neighbouring tops share corners (no seams or steps)")
 		max_h = maxf(max_h, h)
-	assert_true(max_h <= WorldView.MAX_H, "MAX_H bounds every terrace")
+	assert_true(max_h <= WorldView.MAX_H, "MAX_H bounds the surface")
 	assert_true(max_h > WorldView.BASE_H, "the island has some relief")
+	var fills := 0
+	for i in ws.tile_count():
+		if view._corner_fill[i] != 0:
+			fills += 1
+			assert_true(LandType.is_water(ws.land_type[i]), "only shore notches are filled")
+	assert_true(fills > 0, "diagonal coasts get their saw-tooth filled")
 	view.free()
 
 

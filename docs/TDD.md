@@ -35,6 +35,16 @@ serialize as raw bytes (exact float round-trip).
 diamond picking (no bounding-box error). Screen→world uses the viewport canvas transform.
 
 ## Rendering
+**Ground surface.** Land is one continuous surface, not stacked blocks: each tile corner gets a
+height (`BASE_H + RELIEF × smoothed elevation`, averaged over the up-to-four land tiles sharing
+it; any corner touching water sits at `BASE_H`), so neighbouring tops share vertices and meet
+without seams or stair steps. Each corner also carries a slope-light factor, so relief reads
+through smooth Gouraud shading. Vertical banks are drawn only at the shore. Water tiles in a
+notch between two land neighbours draw a low half-tile bank (`_corner_fill`), turning saw-tooth
+diagonal coasts into straight shorelines. Streams are quadratic-Bézier ribbons from each inflow
+edge through the (slightly meandering) tile centre to the outflow edge, on the sloped surface,
+with a soft bank and glint; they fall over the shore bank as a small waterfall.
+
 The map is split into 8×8-tile `WorldChunk` nodes. `WorldView.refresh()` recomputes each tile's
 quantized color into a `PackedColorArray`, compares its RGBA32 key to the cached key, and calls
 `queue_redraw()` only on chunks containing changed tiles. Godot caches canvas commands, so a

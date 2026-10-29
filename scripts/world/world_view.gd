@@ -11,11 +11,13 @@ const CHUNK := 8
 const WORLD_SHADER := preload("res://shaders/world.gdshader")
 const WATER_SHADER := preload("res://shaders/water.gdshader")
 
-## Raised land: terraces of STEP px above the water line.
+## Raised land: a smooth surface BASE_H px above the water line at the shore, rising with
+## (smoothed) elevation by RELIEF px per unit. Every tile corner is shared by its four tiles,
+## so neighbouring tops meet exactly and the island reads as soft rolling ground; only the
+## shore gets a vertical bank down to the sea.
 const BASE_H := 6.0
-const STEP := 4.5
-const LEVELS := 11
-const MAX_H := BASE_H + STEP * LEVELS
+const RELIEF := 72.0
+const MAX_H := BASE_H + RELIEF * (1.0 - IslandGenerator.SHALLOW_MAX)
 
 const SWAY := Color(1, 1, 1, 254.0 / 255.0)
 const FLICKER := Color(1, 1, 1, 253.0 / 255.0)
@@ -68,6 +70,10 @@ var _dirty := PackedByteArray()
 var _chunks: Array[WorldChunk] = []
 var _chunks_x := 0
 var _cottage_rank := PackedInt32Array()
+var corner_h := PackedFloat32Array()   ## (w+1)*(h+1) surface heights at tile corners
+var _shade := PackedFloat32Array()     ## per-corner light factor from the local slope
+var _corner_fill := PackedByteArray()  ## per water tile: concave shore corners to fill
+var _cur := PackedVector2Array()       ## top face of the tile being drawn
 var highlight: TileHighlight
 var water: Node2D
 var _water_mat: ShaderMaterial
@@ -148,8 +154,48 @@ func _compute_static() -> void:
 	var n := world.tile_count()
 	heights.resize(n)
 	down.resize(n)
+	var raw := PackedFloat32Array()
+	raw.resize(n)
 	for i in n:
-		heights[i] = height_for(world.land_type[i], world.elevation[i])
+		raw[i] = height_for(world.land_type[i], smoothed_elevation(i))
+	var cw := w + 1
+	var chh := world.height + 1
+	corner_h.resize(cw * chh)
+	for b in chh:
+		for a in cw:
+			var sum := 0.0
+			var cnt := 0
+			var shore := false
+			for o in [Vector2i(-1, -1), Vector2i(0, -1), Vector2i(-1, 0), Vector2i(0, 0)]:
+				var tx: int = a + o.x
+				var ty: int = b + o.y
+				if not world.in_bounds(tx, ty) or LandType.is_water(world.land_type[ty * w + tx]):
+					shore = true
+				else:
+					sum += raw[ty * w + tx]
+					cnt += 1
+			corner_h[b * cw + a] = 0.0 if cnt == 0 else (BASE_H if shore else sum / cnt)
+	_shade.resize(cw * chh)
+	for b in chh:
+		for a in cw:
+			var hx := corner_h[b * cw + mini(a + 1, w)]
+			var hy := corner_h[mini(b + 1, world.height) * cw + a]
+			var hpx := corner_h[b * cw + maxi(a - 1, 0)]
+			var hpy := corner_h[maxi(b - 1, 0) * cw + a]
+			# light from the upper left (map -x, a little -y): slopes facing it are brighter
+			_shade[b * cw + a] = clampf(1.0 + 0.018 * ((hx - hpx) * 0.5 + (hy - hpy) * 0.2), 0.84, 1.14)
+	_corner_fill.resize(n)
+	_corner_fill.fill(0)
+	for i in n:
+		if LandType.is_water(world.land_type[i]):
+			heights[i] = 0.0
+			_corner_fill[i] = _concave_corners(i)
+		else:
+			var x := i % w
+			@warning_ignore("integer_division")
+			var y := i / w
+			heights[i] = (corner_h[y * cw + x] + corner_h[y * cw + x + 1] + corner_h[(y + 1) * cw + x] \
+				+ corner_h[(y + 1) * cw + x + 1]) * 0.25
 	for i in n:
 		var x := i % w
 		@warning_ignore("integer_division")
@@ -184,8 +230,56 @@ func _compute_static() -> void:
 static func height_for(t: int, e: float) -> float:
 	if LandType.is_water(t):
 		return 0.0
-	var lv := clampi(int((e - IslandGenerator.SHALLOW_MAX) / 0.055), 0, LEVELS)
-	return BASE_H + STEP * lv
+	return BASE_H + clampf(e - IslandGenerator.SHALLOW_MAX, 0.0, 1.0) * RELIEF
+
+
+## Elevation averaged with its land neighbours (3×3), which irons out one-tile bumps and pits.
+func smoothed_elevation(i: int) -> float:
+	var w := world.width
+	var x := i % w
+	@warning_ignore("integer_division")
+	var y := i / w
+	var sum := world.elevation[i] * 2.0
+	var cnt := 2.0
+	for dy in range(-1, 2):
+		for dx in range(-1, 2):
+			if (dx != 0 or dy != 0) and world.in_bounds(x + dx, y + dy):
+				var j := (y + dy) * w + x + dx
+				if not LandType.is_water(world.land_type[j]):
+					sum += world.elevation[j]
+					cnt += 1.0
+	return sum / cnt
+
+
+## Water-tile corners that sit in a notch between two land neighbours (and the land diagonal
+## between them): the saw-tooth of a diagonal coastline. Filling that half-tile with a low
+## bank turns the saw-tooth into one straight shore.
+## Bit 0: top half (x-1, y-1), 1: right (y-1, x+1), 2: bottom (x+1, y+1), 3: left (y+1, x-1).
+func _concave_corners(i: int) -> int:
+	var w := world.width
+	var x := i % w
+	@warning_ignore("integer_division")
+	var y := i / w
+	var l := _is_land(x - 1, y)
+	var u := _is_land(x, y - 1)
+	var r := _is_land(x + 1, y)
+	var d := _is_land(x, y + 1)
+	if int(l) + int(u) + int(r) + int(d) >= 3:
+		return 0 # an inlet or lake end: leave the water visible
+	var m := 0
+	if l and u and _is_land(x - 1, y - 1):
+		m |= 1
+	if u and r and _is_land(x + 1, y - 1):
+		m |= 2
+	if r and d and _is_land(x + 1, y + 1):
+		m |= 4
+	if d and l and _is_land(x - 1, y + 1):
+		m |= 8
+	return m
+
+
+func _is_land(x: int, y: int) -> bool:
+	return world.in_bounds(x, y) and not LandType.is_water(world.land_type[y * world.width + x])
 
 
 static func hash_of(i: int, salt: int) -> int:
@@ -212,6 +306,12 @@ func refresh(force: bool = false) -> int:
 			@warning_ignore("integer_division")
 			var ci := ((i / w) / CHUNK) * _chunks_x + (i % w) / CHUNK
 			_dirty[ci] = 1
+			if _corner_fill.size() == n and LandType.is_water(world.land_type[i]) == false:
+				# shore fills borrow a land neighbour's colour: redraw neighbouring chunks too
+				for j in [i - 1, i + 1, i - w, i + w]:
+					if j >= 0 and j < n and _corner_fill[j] != 0:
+						@warning_ignore("integer_division")
+						_dirty[((j / w) / CHUNK) * _chunks_x + (j % w) / CHUNK] = 1
 	var redrawn := 0
 	for ci in _dirty.size():
 		if _dirty[ci] == 1:
@@ -312,8 +412,8 @@ func color_for(i: int) -> Color:
 			c = c.lerp(BARE_SOIL, bare * 0.85)
 		var lush := snappedf(clampf((world.vegetation_cover[i] - 0.6) / 0.4, 0.0, 1.0), 0.25)
 		c = c.darkened(lush * 0.08)
-	# higher terraces are a touch lighter (soft aerial light)
-	var lv := (heights[i] - BASE_H) / (STEP * LEVELS) if heights.size() > i else 0.0
+	# higher ground is a touch lighter (soft aerial light)
+	var lv := (heights[i] - BASE_H) / (MAX_H - BASE_H) if heights.size() > i else 0.0
 	return c.lightened(lv * 0.10)
 
 
@@ -376,6 +476,28 @@ func top_center(x: int, y: int) -> Vector2:
 	return Iso.tile_to_local(x, y) - Vector2(0, heights[y * world.width + x])
 
 
+## Screen position of tile corner (a, b) on the surface: corner (x, y) is the top (north)
+## vertex of tile (x, y); its other vertices are corners (x+1, y), (x+1, y+1) and (x, y+1).
+func corner_point(a: int, b: int) -> Vector2:
+	return Iso.tile_to_local(a, b) - Vector2(0, Iso.HALF_H + _ch(a, b))
+
+
+## The tile's top face as drawn (N, E, S, W), following the slope. Water tiles are flat.
+func top_polygon(x: int, y: int) -> PackedVector2Array:
+	if world == null or LandType.is_water(world.land_type[y * world.width + x]):
+		return Iso.tile_polygon(x, y)
+	return PackedVector2Array([corner_point(x, y), corner_point(x + 1, y), corner_point(x + 1, y + 1), corner_point(x, y + 1)])
+
+
+func _ch(a: int, b: int) -> float:
+	return corner_h[b * (world.width + 1) + a] if corner_h.size() > 0 else 0.0
+
+
+func _lit(k: int) -> Color:
+	var f := _shade[k]
+	return Color(f, f, f, 1.0)
+
+
 ## Height-aware picking: the front-most tile whose raised block contains the point.
 func pick(p: Vector2) -> Vector2i:
 	var flat := Iso.local_to_tile(p)
@@ -410,42 +532,33 @@ func draw_tile(cv: CanvasItem, x: int, y: int) -> void:
 	if LandType.is_water(t):
 		if overlay != Overlay.NONE:
 			cv.draw_colored_polygon(Iso.tile_polygon(x, y), tile_colors[i] * Color(1, 1, 1, 0.55))
+		elif _corner_fill.size() > i and _corner_fill[i] != 0:
+			_draw_corner_fill(cv, x, y, i)
 		return
 	var h := heights[i]
 	var c := Iso.tile_to_local(x, y)
 	var top := c - Vector2(0, h)
-	var nw := top + Vector2(-Iso.HALF_W, 0)
-	var nn := top + Vector2(0, -Iso.HALF_H)
-	var ne := top + Vector2(Iso.HALF_W, 0)
-	var ns := top + Vector2(0, Iso.HALF_H)
+	var cw := w + 1
+	var nn := corner_point(x, y)
+	var ne := corner_point(x + 1, y)
+	var ns := corner_point(x + 1, y + 1)
+	var nw := corner_point(x, y + 1)
+	_cur = PackedVector2Array([nn, ne, ns, nw])
 	var col := tile_colors[i]
 	var side := SIDE_SAND if t == LandType.BEACH else (SIDE_ROCK if t == LandType.HILLS else SIDE_SOIL)
-	# side faces, only where the front neighbour is lower
-	var hl := heights[i + w] if y + 1 < world.height else 0.0
-	var hr := heights[i + 1] if x + 1 < w else 0.0
-	if hl < h:
-		var d := Vector2(0, h - hl)
-		var lip := minf(2.5, h - hl)
-		cv.draw_polygon(PackedVector2Array([nw, ns, ns + d, nw + d]),
+	# banks only at the shore and map edge; inland tiles share corners, so they meet seamlessly
+	if y + 1 >= world.height or LandType.is_water(world.land_type[i + w]):
+		cv.draw_polygon(PackedVector2Array([nw, ns, ns + Vector2(0, _ch(x + 1, y + 1)), nw + Vector2(0, _ch(x, y + 1))]),
 			PackedColorArray([side.darkened(0.08), side.darkened(0.12), side.darkened(0.42), side.darkened(0.38)]))
-		cv.draw_colored_polygon(PackedVector2Array([nw, ns, ns + Vector2(0, lip), nw + Vector2(0, lip)]), col.darkened(0.22))
-	if hr < h:
-		var d2 := Vector2(0, h - hr)
-		var lip2 := minf(2.5, h - hr)
-		cv.draw_polygon(PackedVector2Array([ns, ne, ne + d2, ns + d2]),
+		cv.draw_colored_polygon(PackedVector2Array([nw, ns, ns + Vector2(0, 2.0), nw + Vector2(0, 2.0)]), col.darkened(0.22))
+	if x + 1 >= w or LandType.is_water(world.land_type[i + 1]):
+		cv.draw_polygon(PackedVector2Array([ns, ne, ne + Vector2(0, _ch(x + 1, y)), ns + Vector2(0, _ch(x + 1, y + 1))]),
 			PackedColorArray([side.darkened(0.30), side.darkened(0.26), side.darkened(0.55), side.darkened(0.58)]))
-		cv.draw_colored_polygon(PackedVector2Array([ns, ne, ne + Vector2(0, lip2), ns + Vector2(0, lip2)]), col.darkened(0.36))
-	# top with soft per-vertex variation (consistent across neighbours => smooth)
-	var pts := PackedVector2Array([nn, ne, ns, nw])
-	cv.draw_polygon(pts, PackedColorArray([
-		_vary(col, x, y), _vary(col, x + 1, y), _vary(col, x + 1, y + 1), _vary(col, x, y + 1)]))
-	# highlight only real terrace edges (where the tile behind is lower)
-	var hb_l := heights[i - w] if y > 0 else 0.0
-	var hb_r := heights[i - 1] if x > 0 else 0.0
-	if hb_r < h:
-		cv.draw_line(nw, nn, Color(1, 1, 1, 0.16), 1.0)
-	if hb_l < h:
-		cv.draw_line(nn, ne, Color(1, 1, 1, 0.16), 1.0)
+		cv.draw_colored_polygon(PackedVector2Array([ns, ne, ne + Vector2(0, 2.0), ns + Vector2(0, 2.0)]), col.darkened(0.36))
+	# top: per-vertex colour variation and slope light, both shared with neighbours => seamless
+	cv.draw_polygon(_cur, PackedColorArray([
+		_vary(col, x, y) * _lit(y * cw + x), _vary(col, x + 1, y) * _lit(y * cw + x + 1),
+		_vary(col, x + 1, y + 1) * _lit((y + 1) * cw + x + 1), _vary(col, x, y + 1) * _lit((y + 1) * cw + x)]))
 	if overlay != Overlay.NONE:
 		_draw_structure(cv, i, top)
 		return
@@ -459,6 +572,34 @@ func draw_tile(cv: CanvasItem, x: int, y: int) -> void:
 	if (deco >> 17) & 1:
 		_draw_floodwater(cv, i, top)
 	_draw_nature(cv, x, y, i, top, deco)
+
+
+## Fills a notch in a diagonal coastline with a low half-tile bank of the neighbour's ground,
+## so shorelines read as straight runs instead of a saw-tooth of diamonds.
+func _draw_corner_fill(cv: CanvasItem, x: int, y: int, i: int) -> void:
+	var w := world.width
+	var m := _corner_fill[i]
+	var pairs := [i - 1, i - w, i + 1, i + w]
+	var nn := corner_point(x, y)
+	var ne := corner_point(x + 1, y)
+	var ns := corner_point(x + 1, y + 1)
+	var nw := corner_point(x, y + 1)
+	for k in 4:
+		if (m >> k) & 1 == 0:
+			continue
+		var col := tile_colors[pairs[k]]
+		var tri: PackedVector2Array
+		match k:
+			0: tri = PackedVector2Array([nw, nn, ne])
+			1: tri = PackedVector2Array([nn, ne, ns])
+			2: tri = PackedVector2Array([ne, ns, nw])
+			_: tri = PackedVector2Array([ns, nw, nn])
+		if k == 0: # this long edge faces the viewer: a sandy bank down to the water
+			var dv := Vector2(0, BASE_H)
+			cv.draw_polygon(PackedVector2Array([nw, ne, ne + dv, nw + dv]), PackedColorArray([
+				SIDE_SAND.darkened(0.10), SIDE_SAND.darkened(0.28), SIDE_SAND.darkened(0.5), SIDE_SAND.darkened(0.4)]))
+			cv.draw_colored_polygon(PackedVector2Array([nw, ne, ne + Vector2(0, 2.0), nw + Vector2(0, 2.0)]), col.darkened(0.22))
+		cv.draw_colored_polygon(tri, col)
 
 
 ## Standing floodwater: a murky sheet drawn over whatever is built here, with a few ripples.
@@ -477,43 +618,91 @@ func _vary(col: Color, vx: int, vy: int) -> Color:
 	return col.lightened(v * 0.07) if v > 0.0 else col.darkened(-v * 0.07)
 
 
+## The current tile's top face shrunk toward its centre (so it follows the slope).
 func _inset(top: Vector2, s: float) -> PackedVector2Array:
-	return PackedVector2Array([top + Vector2(0, -Iso.HALF_H * s), top + Vector2(Iso.HALF_W * s, 0),
-		top + Vector2(0, Iso.HALF_H * s), top + Vector2(-Iso.HALF_W * s, 0)])
+	var out := PackedVector2Array()
+	for p in _cur:
+		out.append(top + (p - top) * s)
+	return out
 
 
 func _stream_color(i: int) -> Color:
 	return RIVER.lerp(MUD, clampf(world.sediment[i] * 6.0, 0.0, 0.8))
 
 
+## Streams are smooth ribbons through the tile centre (inflow edge -> centre -> outflow edge,
+## bent as a quadratic Bezier) over a soft darker bank and under a thin glint, so a river reads
+## as one continuous channel rather than straight dashes along the tile seams. Edge points sit
+## on the sloped surface, so channels follow the ground.
 func _draw_streams(cv: CanvasItem, x: int, y: int, i: int, top: Vector2, deco: int) -> void:
 	var river := (deco >> 10) & 3
 	var w := world.width
 	var col := _stream_color(i)
-	var width := 2.0 + river * 1.6
-	if river > 0 and down[i] >= 0:
-		var j := down[i]
-		var dj := world.coords(j) - Vector2i(x, y)
-		var edge := top + (Iso.tile_to_local(dj.x, dj.y) * 0.5)
-		cv.draw_line(top, edge, col.darkened(0.2), width + 1.5, true)
-		cv.draw_line(top, edge, col, width, true)
-		cv.draw_circle(edge, width * 0.5, col)
-		# waterfall down the front faces
-		var hj := heights[j]
-		if (dj == Vector2i(1, 0) or dj == Vector2i(0, 1)) and hj < heights[i]:
-			var foot := edge + Vector2(0, heights[i] - hj)
-			cv.draw_line(edge, foot, col.lightened(0.35), width)
-		cv.draw_circle(top, width * 0.5, col)
+	var width := 1.4 + river * 1.6
+	var has_out := river > 0 and down[i] >= 0
+	var out_pt := top
+	var dj := Vector2i.ZERO
+	if has_out:
+		dj = world.coords(down[i]) - Vector2i(x, y)
+		out_pt = _edge_mid(x, y, dj)
+	var ins: Array[Vector2] = []
+	var in_w: Array[float] = []
 	var nb := [Vector2i(-1, 0), Vector2i(1, 0), Vector2i(0, -1), Vector2i(0, 1)]
 	for k in 4:
 		if (deco >> (21 + k)) & 1:
 			var o: Vector2i = nb[k]
-			var j2 := (y + o.y) * w + x + o.x
-			var wj: float = 2.0 + (0.0 if world.flow[j2] < 0.15 else (1.6 if world.flow[j2] < 0.3 else 3.2))
-			var edge2 := top + Iso.tile_to_local(o.x, o.y) * 0.5
-			cv.draw_line(edge2, top, col.darkened(0.2), wj + 1.5, true)
-			cv.draw_line(edge2, top, col, wj, true)
-			cv.draw_circle(top, wj * 0.5, col)
+			var fl := world.flow[(y + o.y) * w + x + o.x]
+			ins.append(_edge_mid(x, y, o))
+			in_w.append(3.0 if fl < 0.15 else (4.6 if fl < 0.3 else 6.2))
+	if not has_out and ins.is_empty():
+		return
+	# a gentle per-tile meander keeps long straight runs from looking ruled
+	var bend := top + Vector2(float(hash_of(i, 31) % 13) - 6.0, float(hash_of(i, 37) % 7) - 3.0)
+	var paths: Array[PackedVector2Array] = []
+	var widths: Array[float] = []
+	if ins.is_empty():
+		paths.append(_bezier(top, bend, out_pt))
+		widths.append(width)
+	for k in ins.size():
+		paths.append(_bezier(ins[k], bend, out_pt if has_out else top))
+		widths.append(maxf(in_w[k], width) if has_out else in_w[k])
+	var bank := Color(col.darkened(0.4), 0.28)
+	if river <= 1 and ins.size() <= 1:
+		col = Color(col, 0.8) # a seasonal rivulet: lighter than a real stream
+	for k in paths.size():
+		cv.draw_polyline(paths[k], bank, widths[k] + 3.0, true)
+	for k in paths.size():
+		cv.draw_polyline(paths[k], col, widths[k], true)
+	for k in paths.size():
+		cv.draw_polyline(paths[k], Color(1, 1, 1, 0.22), maxf(widths[k] * 0.3, 1.0), true)
+	# a stream leaving over the shore bank falls into the sea with a little splash
+	if has_out and (dj == Vector2i(1, 0) or dj == Vector2i(0, 1)) and LandType.is_water(world.land_type[down[i]]):
+		var foot := out_pt + Vector2(0, BASE_H)
+		cv.draw_line(out_pt, foot, col.lightened(0.15), width + 1.0)
+		cv.draw_circle(foot, width * 0.7, Color(1, 1, 1, 0.45))
+
+
+## Midpoint of the edge of tile (x, y) facing neighbour offset o, on the surface.
+func _edge_mid(x: int, y: int, o: Vector2i) -> Vector2:
+	var a: Vector2
+	var b: Vector2
+	if o == Vector2i(1, 0):
+		a = corner_point(x + 1, y); b = corner_point(x + 1, y + 1)
+	elif o == Vector2i(-1, 0):
+		a = corner_point(x, y); b = corner_point(x, y + 1)
+	elif o == Vector2i(0, 1):
+		a = corner_point(x, y + 1); b = corner_point(x + 1, y + 1)
+	else:
+		a = corner_point(x, y); b = corner_point(x + 1, y)
+	return (a + b) * 0.5
+
+
+static func _bezier(a: Vector2, c: Vector2, b: Vector2) -> PackedVector2Array:
+	var pts := PackedVector2Array()
+	for s in 7:
+		var t := s / 6.0
+		pts.append(a.lerp(c, t).lerp(c.lerp(b, t), t))
+	return pts
 
 
 func sprite(cv: CanvasItem, name: String, at: Vector2, mod: Color = Color.WHITE, s: float = 1.0) -> void:
