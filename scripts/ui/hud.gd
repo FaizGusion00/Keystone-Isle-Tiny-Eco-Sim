@@ -1815,7 +1815,7 @@ func queue_coach() -> void:
 ## how to act, how time works, and where the "why" lives. Each is a title plus one line.
 func start_coach() -> void:
 	_coach_steps = [
-		[func() -> Control: return _obj_card if _obj_card.visible else _day_card, "Your goals",
+		[func() -> Control: return _obj_card, "Your goals",
 			"Finish these before the deadline to earn stars."],
 		[func() -> Control: return _chips_flow, "Island vitals",
 			"People, food, water, fish, goats, labor and wood. The heart is overall health."],
@@ -1826,6 +1826,8 @@ func start_coach() -> void:
 		[func() -> Control: return events_button, "Why did that happen?",
 			"History explains every event. Tap one to see its causes."],
 	]
+	if not _obj_card.visible:
+		_coach_steps.remove_at(0)  # sandbox / replay without goals: nothing to point at
 	_coach.visible = true
 	_coach_go(0)
 

@@ -101,6 +101,20 @@ func test_coach_marks_walk_through_and_end() -> void:
 	_free(main)
 
 
+func test_replayed_tips_without_goals_skip_goal_step_and_hold_time() -> void:
+	var main := _main()
+	main.new_world(7)  # sandbox: no objectives
+	main.show_coach()
+	for st in main.hud._coach_steps:
+		assert_true(st[1] != "Your goals", "no goals step without goals")
+	main._process(0.016)
+	assert_false(main.clock.can_tick(), "replayed tips hold the clock")
+	main.hud.end_coach()
+	main._process(0.016)
+	assert_true(main.clock.can_tick())
+	_free(main)
+
+
 func test_coach_tips_are_short_point_at_target_and_hold_time() -> void:
 	var main := _main()
 	main.start_tutorial()

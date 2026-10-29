@@ -32,7 +32,7 @@ for o in "landscape 1280 720" "portrait 720 1280" "desktop 1920 1080"; do
 	shot $w $h ${tag}_10_new_world --screen=new_world
 	shot $w $h ${tag}_11_pause --screen=pause
 	shot $w $h ${tag}_12_results --screen=results_won
-	shot $w $h ${tag}_13_coach_marks --coach
+	shot $w $h ${tag}_13_coach_marks --tutorial --coach=2
 	shot $w $h ${tag}_14_modes --screen=modes
 	shot $w $h ${tag}_15_journal --screen=journal
 	shot $w $h ${tag}_16_codex --screen=codex
