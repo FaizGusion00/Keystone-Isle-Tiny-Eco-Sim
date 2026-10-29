@@ -88,6 +88,14 @@ var _obj_rows: VBoxContainer
 var _obj_footer: Label
 var _obj_collapsed := false
 var _obj_chev: Button
+var _obj_summary: Label        ## "1/2 · 198 d" – what the collapsed pill shows
+var _obj_key := ""             ## identity of the scenario the card is showing
+var _obj_arm_tick := 0         ## sim day the card was last (re-)expanded
+var _obj_arm_token := 0        ## invalidates stale real-time collapse timers
+var _obj_done := 0
+var _obj_status := -1
+const OBJ_AUTO_DAYS := 8       ## the goals card folds to a pill after this many sim days…
+const OBJ_AUTO_SECS := 6.0     ## …or this many real seconds, whichever is first
 var objective_label: Label ## plain-text mirror (one line)
 
 # inspector
@@ -147,6 +155,7 @@ const MINOR_TYPES := [EventLog.Type.EROSION]
 
 # toasts
 var _toasts: VBoxContainer
+var _stack: VBoxContainer   ## the one notification column: award banner on top, toasts below
 var _last_toast := ""
 # award banner: achievements / unlocks / level-ups, shown one at a time (never stacked)
 var _award: PanelContainer
@@ -269,6 +278,16 @@ func _layout(sz: Vector2) -> void:
 	var top_bottom := maxf(chips_y + chips_h, t + maxf(_day_card.size.y, _speed_card.size.y)) + 10.0
 	# --- objectives card (top-left below)
 	var obj_w := minf(372.0, w) if not portrait else w
+	if _obj_collapsed:
+		# the pill hugs its content: flag, title, "1/2 · 198 d", chevron
+		var f := _obj_title.get_theme_font("font")
+		var fs := _obj_title.get_theme_font_size("font_size")
+		_obj_title.custom_minimum_size.x = minf(f.get_string_size(_obj_title.text, HORIZONTAL_ALIGNMENT_LEFT, -1, fs).x + 2.0, 220.0)
+		_obj_card.custom_minimum_size = Vector2.ZERO
+		_obj_card.reset_size()
+		obj_w = minf(_obj_card.get_combined_minimum_size().x, obj_w)
+	else:
+		_obj_title.custom_minimum_size.x = 0.0
 	_obj_card.custom_minimum_size = Vector2(obj_w, 0)
 	_obj_card.reset_size()
 	_obj_card.position = Vector2(l, top_bottom)
@@ -317,14 +336,14 @@ func _layout(sz: Vector2) -> void:
 		if _inspector.visible:
 			tr = _inspector.position.x - 12.0
 	var tw := minf(520.0, maxf(200.0, tr - tl))
-	_toasts.custom_minimum_size.x = tw
-	_toasts.size.x = tw
+	_stack.custom_minimum_size.x = tw
+	_stack.size.x = tw
 	# a phone-portrait history drawer already lists every event, so toasts stay out of its way
 	_toasts.visible = not (portrait and events_panel.visible)
 	var toast_y := top_bottom + 4.0
 	if portrait and _obj_card.visible:
-		toast_y = _obj_card.position.y + _obj_card.size.y + 8.0  # full-width goals card owns the top
-	_toasts.position = Vector2(tl + (tr - tl - tw) * 0.5, toast_y)
+		toast_y = _obj_card.position.y + _obj_card.size.y + 8.0  # the goals card owns the top-left
+	_stack.position = Vector2(tl + (tr - tl - tw) * 0.5, toast_y)
 	# --- popup + scrim
 	_scrim.position = Vector2.ZERO
 	_scrim.size = sz
@@ -338,18 +357,58 @@ func _layout(sz: Vector2) -> void:
 		_place_coach()
 
 
-func _flow_chip(key: String, icon_name: String, tip: String) -> void:
+func _flow_chip(key: String, icon_name: String, caption: String, tip: String) -> void:
 	var p := UiKit.card("Chip")
 	p.tooltip_text = tip
-	p.mouse_filter = Control.MOUSE_FILTER_PASS
+	p.mouse_filter = Control.MOUSE_FILTER_STOP
 	var row := UiKit.hbox(6)
 	p.add_child(row)
 	var ic := UiKit.icon(icon_name, 20, UiKit.TEAL_DARK)
 	row.add_child(ic)
 	var v := UiKit.label("0", 0, "Value")
-	row.add_child(v)
+	row.add_child(_chip_stack(v, caption))
 	_chips_flow.add_child(p)
 	_chips[key] = {"panel": p, "value": v, "icon": ic}
+	_chip_explains(p, icon_name)
+
+
+## Value over a small caption ("People", "Food"…) so new players can read the bar unaided.
+func _chip_stack(v: Label, caption: String) -> VBoxContainer:
+	var col := UiKit.vbox(-3)
+	col.alignment = BoxContainer.ALIGNMENT_CENTER
+	col.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	v.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	col.add_child(v)
+	var cap := UiKit.label(caption, 12, "Caption")
+	cap.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	col.add_child(cap)
+	return col
+
+
+## Tapping a chip explains it in a toast (touch screens have no hover tooltips).
+func _chip_explains(p: Control, icon_name: String) -> void:
+	p.gui_input.connect(func(e: InputEvent) -> void:
+		var tap := (e is InputEventMouseButton and (e as InputEventMouseButton).button_index == MOUSE_BUTTON_LEFT \
+			and not (e as InputEventMouseButton).pressed) or (e is InputEventScreenTouch and not (e as InputEventScreenTouch).pressed)
+		if tap:
+			p.accept_event()
+			explain_chip(p, icon_name))
+
+
+func explain_chip(p: Control, icon_name: String) -> void:
+	# replace an earlier explanation instead of piling them up
+	for c in _toasts.get_children():
+		if c.has_meta("chip_tip"):
+			c.queue_free()
+			_toasts.remove_child(c)
+	toast(p.tooltip_text, 3.5, icon_name)
+	if _toasts.get_child_count() > 0:
+		_toasts.get_child(_toasts.get_child_count() - 1).set_meta("chip_tip", true)
+	if not UiKit.reduce_motion:
+		p.pivot_offset = p.size * 0.5
+		var tw := p.create_tween()
+		tw.tween_property(p, "scale", Vector2(1.06, 1.06), 0.08)
+		tw.tween_property(p, "scale", Vector2.ONE, 0.16).set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT)
 
 
 # ================================================================== top bar
@@ -378,25 +437,26 @@ func _build_chips() -> void:
 	root.add_child(_chips_flow)
 	top_bar_row = _chips_flow
 	status_panel = _chips_flow
-	_flow_chip("villagers", "users", "Villagers / homes available")
-	_flow_chip("food", "wheat", "Food stored")
-	_flow_chip("water", "droplet", "Fresh water: share of the village's need met")
-	_flow_chip("fish", "fish", "Fish in coastal waters (need clear water)")
-	_flow_chip("goats", "rabbit", "Wild goats (need grass and forest)")
-	_flow_chip("labor", "hammer", "Labor: spent by tools, regrows each day")
-	_flow_chip("wood", "axe", "Wood: from clearing forest, spent on buildings")
+	_flow_chip("villagers", "users", "People", "Villagers / homes available")
+	_flow_chip("food", "wheat", "Food", "Food stored")
+	_flow_chip("water", "droplet", "Water", "Fresh water: share of the village's need met")
+	_flow_chip("fish", "fish", "Fish", "Fish in coastal waters (need clear water)")
+	_flow_chip("goats", "rabbit", "Goats", "Wild goats (need grass and forest)")
+	_flow_chip("labor", "hammer", "Labor", "Labor: spent by tools, regrows each day")
+	_flow_chip("wood", "axe", "Wood", "Wood: from clearing forest, spent on buildings")
 	# island health meter
 	var p := UiKit.card("Chip")
 	p.tooltip_text = "Island health: plants, soil, water, fish, wildlife and village together"
-	p.mouse_filter = Control.MOUSE_FILTER_PASS
+	p.mouse_filter = Control.MOUSE_FILTER_STOP
 	var row := UiKit.hbox(8)
 	p.add_child(row)
 	row.add_child(UiKit.icon("heart-pulse", 20, UiKit.CORAL))
 	_keystone_bar = UiKit.meter(0.5, UiKit.LEAF, 10, 84)
 	row.add_child(_keystone_bar)
 	_keystone_value = UiKit.label("50", 0, "Value")
-	row.add_child(_keystone_value)
+	row.add_child(_chip_stack(_keystone_value, "Health"))
 	_chips_flow.add_child(p)
+	_chip_explains(p, "heart-pulse")
 	_chips["keystone"] = {"panel": p, "value": _keystone_value, "icon": null}
 	status_label = UiKit.label("")
 	status_label.visible = false
@@ -504,6 +564,7 @@ func status_text() -> String:
 func _build_objectives() -> void:
 	_obj_card = UiKit.card()
 	_obj_card.visible = false
+	_obj_card.set_meta("layout_owned", true)
 	root.add_child(_obj_card)
 	var col := UiKit.vbox(8)
 	_obj_card.add_child(col)
@@ -516,12 +577,14 @@ func _build_objectives() -> void:
 	head.add_child(_obj_title)
 	_obj_chev = UiKit.icon_button("chevron-down", "Show/hide goals")
 	_obj_chev.custom_minimum_size = Vector2(44, 44)
+	_obj_summary = UiKit.label("", 0, "Badge")
+	_obj_summary.add_theme_font_size_override("font_size", 14)
+	_obj_summary.visible = false
+	head.add_child(_obj_summary)
 	_obj_chev.pressed.connect(func() -> void:
-		_obj_collapsed = not _obj_collapsed
-		_obj_rows.visible = not _obj_collapsed
-		_obj_footer.visible = not _obj_collapsed and _obj_footer.text != ""
-		_obj_chev.icon = UiKit.icon_tex("chevron-right" if _obj_collapsed else "chevron-down")
-		relayout())
+		set_goals_collapsed(not _obj_collapsed)
+		if not _obj_collapsed:
+			_arm_goal_collapse(2.0))  # opened by hand: stay open a while longer
 	head.add_child(_obj_chev)
 	_obj_rows = UiKit.vbox(6)
 	col.add_child(_obj_rows)
@@ -530,6 +593,43 @@ func _build_objectives() -> void:
 	objective_label = UiKit.label("")
 	objective_label.visible = false
 	root.add_child(objective_label)
+
+
+## Fold the goals card to a compact pill (title + "done/total · days") or open it again.
+func set_goals_collapsed(on: bool) -> void:
+	if _obj_collapsed == on:
+		return
+	_obj_collapsed = on
+	_obj_rows.visible = not on
+	_obj_footer.visible = not on and _obj_footer.text != ""
+	_obj_summary.visible = on and _obj_summary.text != ""
+	_obj_chev.icon = UiKit.icon_tex("chevron-right" if on else "chevron-down")
+	_obj_chev.tooltip_text = "Show goals" if on else "Hide goals"
+	relayout()
+	UiKit.appear(_obj_card, Vector2.ZERO, 0.18)
+
+
+func goals_collapsed() -> bool:
+	return _obj_collapsed
+
+
+## Open the card and start the countdown back to a pill. `mult` stretches the timers.
+func _arm_goal_collapse(mult: float = 1.0) -> void:
+	_obj_arm_tick = _sim.world.tick if _sim != null else 0
+	_obj_arm_tick += int(OBJ_AUTO_DAYS * (mult - 1.0))
+	_obj_arm_token += 1
+	var token := _obj_arm_token
+	if is_inside_tree():
+		get_tree().create_timer(OBJ_AUTO_SECS * mult).timeout.connect(func() -> void:
+			if token == _obj_arm_token and not coach_active():
+				set_goals_collapsed(true))
+
+
+## The player started playing (tapped the map): the goals have been read, tuck them away.
+func world_touched() -> void:
+	if not _obj_collapsed and _obj_card.visible and not coach_active():
+		_obj_arm_token += 1
+		set_goals_collapsed(true)
 
 
 ## Plain one-line objective (kept for callers without a scenario).
@@ -586,6 +686,38 @@ func update_objectives(sim: Simulation) -> void:
 		foot = "%d days left" % maxi(0, sc.deadline() - sc.days_elapsed(sim.world))
 	_obj_footer.text = foot
 	_obj_footer.visible = foot != "" and not _obj_collapsed
+	# compact pill summary + auto-collapse bookkeeping
+	var done := 0
+	for k in objs.size():
+		if sc.objective_done(k, sim.world):
+			done += 1
+	var summ := ""
+	if sc.is_sandbox():
+		summ = "Free play"
+	elif sc.status == Scenario.Status.WON:
+		summ = "Done · %d★" % sc.stars
+	elif sc.status == Scenario.Status.FAILED:
+		summ = "Failed"
+	else:
+		summ = "%d/%d" % [done, objs.size()]
+		if sc.deadline() > 0:
+			summ += " · %d d" % maxi(0, sc.deadline() - sc.days_elapsed(sim.world))
+	_obj_summary.text = summ
+	_obj_summary.visible = _obj_collapsed and summ != ""
+	var key := "%s|%d" % [sc.title(), sim.get_instance_id()]
+	if key != _obj_key:
+		_obj_key = key  # a new run: show the full checklist, then fold it away
+		_obj_done = done
+		set_goals_collapsed(false)
+		_arm_goal_collapse()
+		_obj_status = sc.status
+	elif done > _obj_done or sc.status != _obj_status:
+		_obj_status = sc.status  # a goal just ticked (or the run ended): open to show it
+		set_goals_collapsed(false)
+		_arm_goal_collapse()
+	elif not _obj_collapsed and sim.world.tick - _obj_arm_tick >= OBJ_AUTO_DAYS and not coach_active():
+		set_goals_collapsed(true)
+	_obj_done = done
 
 
 # ================================================================== inspector
@@ -1284,10 +1416,16 @@ func hide_events() -> void:
 
 # ================================================================== toasts
 
+## Every transient notice lives in one column (_stack): the award banner first, then up to
+## three toasts. The VBox lays them out, so they can never overlap each other.
 func _build_toasts() -> void:
+	_stack = UiKit.vbox(8)
+	_stack.name = "Notifications"
+	_stack.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	root.add_child(_stack)
 	_toasts = UiKit.vbox(6)
 	_toasts.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	root.add_child(_toasts)
+	_stack.add_child(_toasts)
 
 
 func toast(msg: String, seconds: float = 2.5, icon_name: String = "", bad: bool = false) -> void:
@@ -1306,7 +1444,8 @@ func toast(msg: String, seconds: float = 2.5, icon_name: String = "", bad: bool 
 	l.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	row.add_child(l)
 	p.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
-	l.custom_minimum_size.x = minf(l.get_theme_font("font").get_string_size(msg, HORIZONTAL_ALIGNMENT_LEFT, -1, 17).x + 4.0, 440.0)
+	l.custom_minimum_size.x = minf(l.get_theme_font("font").get_string_size(msg, HORIZONTAL_ALIGNMENT_LEFT, -1, 17).x + 4.0,
+		minf(440.0, maxf(140.0, _stack.custom_minimum_size.x - 64.0)))
 	_toasts.add_child(p)
 	while _toasts.get_child_count() > 3:
 		var old := _toasts.get_child(0)
@@ -1330,7 +1469,7 @@ func _build_award() -> void:
 	_award = UiKit.card("Award")
 	_award.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	_award.visible = false
-	_award.set_meta("layout_owned", true)
+	_award.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
 	var row := UiKit.hbox(12)
 	_award.add_child(row)
 	_award_icon = UiKit.icon_badge("award", UiKit.AMBER_SOFT, UiKit.AMBER_DARK, 44)
@@ -1342,7 +1481,8 @@ func _build_award() -> void:
 	col.add_child(_award_sub)
 	_award_title = UiKit.label("", 0, "Subheading")
 	col.add_child(_award_title)
-	root.add_child(_award)
+	_stack.add_child(_award)
+	_stack.move_child(_award, 0)
 
 
 ## Queues a celebratory banner (achievement, unlock, level up). Banners play one after another
@@ -1359,7 +1499,8 @@ func award_pending() -> int:
 func _next_award() -> void:
 	if _award_busy or _award_queue.is_empty() or not is_inside_tree():
 		return
-	if not visible:
+	if not visible or (portrait and events_panel.visible):
+		# wait while a menu hides the HUD or the portrait history drawer covers the column
 		get_tree().create_timer(0.5).timeout.connect(_next_award)
 		return
 	_award_busy = true
@@ -1395,12 +1536,19 @@ func _next_award() -> void:
 
 
 func _place_award() -> void:
-	if _award == null or not _award.visible:
-		return
-	var sz := root.size
-	_award.reset_size()
-	var y := sz.y * (0.30 if portrait else 0.22)
-	_award.position = Vector2((sz.x - _award.size.x) * 0.5, y)
+	if _stack != null:
+		_stack.reset_size()
+
+
+## Screen rects of every visible notification (award + toasts), for layout tests.
+func notification_rects() -> Array[Rect2]:
+	var out: Array[Rect2] = []
+	if _award.visible:
+		out.append(_award.get_global_rect())
+	for c in _toasts.get_children():
+		if c is Control and (c as Control).visible and not c.is_queued_for_deletion():
+			out.append((c as Control).get_global_rect())
+	return out
 
 
 # ================================================================== popup

@@ -147,6 +147,72 @@ func test_achievement_banners_queue_one_at_a_time() -> void:
 	_free(main)
 
 
+func test_notifications_share_one_column_without_overlap() -> void:
+	var main := _main()
+	var vp := main.get_viewport()
+	var old: Vector2i = vp.size
+	main.hud.award("Overlap check")
+	for i in 3:
+		main.hud.toast("Day %d: Heavy rain (60 mm)" % i)
+	for sz in [Vector2i(1280, 720), Vector2i(720, 1280), Vector2i(1920, 1080)]:
+		vp.size = sz
+		main.hud._layout(main.hud.root.size)
+		main.hud._toasts.notification(Container.NOTIFICATION_SORT_CHILDREN)
+		main.hud._stack.notification(Container.NOTIFICATION_SORT_CHILDREN)
+		var rects: Array[Rect2] = main.hud.notification_rects()
+		assert_eq(rects.size(), 4, "award + three toasts visible at %s" % sz)
+		for a in rects.size():
+			for b in range(a + 1, rects.size()):
+				assert_false(rects[a].grow(-1.0).intersects(rects[b].grow(-1.0)), "notices %d/%d overlap at %s" % [a, b, sz])
+		assert_true(rects[0].position.y < rects[1].position.y, "the award banner heads the column")
+		var goals: Rect2 = main.hud._obj_card.get_global_rect()
+		if main.hud._obj_card.visible:
+			for r in rects:
+				assert_false(r.grow(-1.0).intersects(goals), "notices clear the goals card at %s" % sz)
+	vp.size = old
+	_free(main)
+
+
+func test_goals_card_folds_to_a_pill() -> void:
+	var main := _main()
+	var sim: Simulation = ScenarioCatalog.create_sim(ScenarioCatalog.get_def("expanding_village"))
+	main.set_simulation(sim)
+	main.hud.update_objectives(sim)
+	assert_false(main.hud.goals_collapsed(), "a new run shows the full checklist")
+	var full_h: float = main.hud._obj_card.get_combined_minimum_size().y
+	for i in Hud.OBJ_AUTO_DAYS + 1:
+		sim.step()
+		main.hud.update_objectives(sim)
+	assert_true(main.hud.goals_collapsed(), "folds away after a few days")
+	main.hud._layout(main.hud.root.size)
+	assert_true(main.hud._obj_card.get_combined_minimum_size().y < full_h, "the pill is shorter than the card")
+	assert_true(main.hud._obj_summary.visible and main.hud._obj_summary.text.contains("/"), "pill shows progress")
+	main.hud._obj_chev.pressed.emit()
+	assert_false(main.hud.goals_collapsed(), "the chevron opens it again")
+	main.hud.world_touched()
+	assert_true(main.hud.goals_collapsed(), "playing on the map tucks it away")
+	_free(main)
+
+
+func test_resource_chips_are_labelled_and_explain_on_tap() -> void:
+	var main := _main()
+	for key in main.hud._chips:
+		var p: Control = main.hud._chips[key]["panel"]
+		assert_true(p.tooltip_text != "", "%s has a tooltip" % key)
+		var caps := p.find_children("*", "Label", true, false)
+		assert_true(caps.size() >= 2, "%s chip has a value and a caption" % key)
+	var food: Control = main.hud._chips["food"]["panel"]
+	main.hud.explain_chip(food, "wheat")
+	main.hud.explain_chip(food, "wheat")
+	assert_eq(main.hud.toast_text(), "Food stored")
+	var tips := 0
+	for c in main.hud._toasts.get_children():
+		if c.has_meta("chip_tip") and not c.is_queued_for_deletion():
+			tips += 1
+	assert_eq(tips, 1, "repeated taps replace the explanation")
+	_free(main)
+
+
 func test_dam_and_flood_rows_are_accurate() -> void:
 	var main := _main()
 	var sim: Simulation = ScenarioCatalog.create_sim(ScenarioCatalog.get_def("floodplain"))

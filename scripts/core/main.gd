@@ -412,6 +412,7 @@ func pick_tile(screen_pos: Vector2) -> Vector2i:
 
 
 func _on_tile_tapped(screen_pos: Vector2) -> void:
+	hud.world_touched()
 	var t := pick_tile(screen_pos)
 	if not sim.world.in_bounds(t.x, t.y):
 		select_tile(Vector2i(-1, -1))
