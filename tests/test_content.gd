@@ -183,12 +183,20 @@ func test_scores_and_medals() -> void:
 	ws.harvests = 20
 	ws.species_seen = Simulation.SP_BEES | Simulation.SP_FROGS
 	ws.rare_hits = 1
-	var expect := int(round((240 + 6 * 80 + 12 * 15 + 3 * 20 + 40 * 2 + 25) * float(d["score_mult"])))
+	# 1/day + 3/keystone + 30/villager grown beyond the start + 5/harvest + 30/species + 20/rare event
+	var expect := int(round((240 + 3 * 80 + 30 * (15 - IslandGenerator.START_VILLAGERS) + 5 * 20 + 30 * 2 + 20) * float(d["score_mult"])))
 	assert_eq(ScenarioCatalog.score(d, ws, 240), expect)
 	assert_eq(ScenarioCatalog.medal_for(d, 0), 0)
 	assert_eq(ScenarioCatalog.medal_for(d, int(d["medals"][0])), 1)
 	assert_eq(ScenarioCatalog.medal_for(d, int(d["medals"][0]) - 1), 0)
 	assert_eq(ScenarioCatalog.medal_for(d, 99999), 3)
+	# an untouched island (no growth, no harvests) must not reach bronze
+	var idle := WorldState.new(4, 4, 1)
+	idle.keystone = 95.0
+	idle.peak_villagers = IslandGenerator.START_VILLAGERS
+	idle.species_seen = Simulation.SP_BEES | Simulation.SP_FROGS | Simulation.SP_SEABIRDS
+	idle.rare_hits = 2
+	assert_eq(ScenarioCatalog.medal_for(d, ScenarioCatalog.score(d, idle, 240)), 0, "idle play earns no medal")
 	# a finished daily run gives a medal instead of stars
 	var sim := ScenarioCatalog.create_sim(d)
 	sim.scenario.done[0] = 1

@@ -161,7 +161,8 @@ Pure function of the current state; arrivals and departures are logged (`SPECIES
   the run ends (FAILED, scored). Any mode also fails at ≤ `fail_villagers` villagers (daily/weekly 5, endless 4).
 - **Daily / weekly**: survive 240 / 360 days with 2 / 3 mutators drawn deterministically from the id; a mutator
   is only eligible if its `from` date ≤ the island's date, so adding content never changes existing islands.
-- **Score** (weights in `data/modes.json`): `1·days + 6·keystone + 12·peak villagers + 3·harvests
-  + 40·species seen + 25·rare events weathered − 8·villagers lost`, × the product of the mutators' `score_mult`,
-  floored at 0. Medal thresholds per mode (bronze/silver/gold); relaxed runs score but earn no medal. The score
+- **Score** (weights in `data/modes.json`): `1·days + 3·keystone + 30·(peak villagers − 10 start)
+  + 5·harvests + 30·species seen + 20·rare events weathered − 8·villagers lost`, × the product of the mutators' `score_mult`,
+  floored at 0. Medal thresholds (bronze/silver/gold): daily 850/1100/1400, weekly
+  1200/1500/1900, endless 1600/2300/3000, calibrated with `tools/balance.gd` so an untouched island earns none; relaxed runs score but earn no medal. The score
   is frozen when the run ends (won or failed).

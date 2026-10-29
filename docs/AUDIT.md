@@ -32,6 +32,7 @@ not re-run against the old code for this document. Run the suite with
 | 11 | Text vs rules | Algal-bloom codex said "don't over-farm one valley" (the rule counts farms island-wide) and did not mention the 3-farm condition; frogs' habitat omitted the 4-tile minimum. | Codex / species text rewritten to match the code. | review |
 | 12 | Content data | A mutator, species or rare event could reference an icon that does not exist (blank button). | `ContentDB.validate` checks icons exist in `assets/icons`. | `test_content_files_validate` |
 | 13 | Exit | Godot reported leaked Ogg playback instances at quit (intermittent, worse under load). | All quit paths go through `quit_game()`: stop audio, wait one frame plus a real-time settle (0.3 s; 1 s for screenshot runs), then quit. Window close is intercepted. | screenshot pipeline greps logs for leaks |
+| 14 | Balance | Seeded-mode scores were dominated by passive terms (starting villagers, island health): an untouched island earned bronze on 9/12 dailies and silver on 2/12, and a scripted steward barely beat it. | Score rewards village *growth* over the start (30/villager), harvests 5, keystone 3; medals recalibrated with `tools/balance.gd` (idle: 0 medals in 30 runs; steward: mostly bronze/silver). | `test_scores_and_medals` (an idle island earns no medal) |
 
 ## Known gaps (not fixed, by decision or out of scope)
 - **XP farming**: XP is granted for every completed run, so replaying a seeded island repeatedly earns XP.

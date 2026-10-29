@@ -2,11 +2,11 @@
   "version": 1,
   "score": {
     "per_day": 1.0,
-    "keystone": 6.0,
-    "peak_villagers": 12.0,
-    "harvests": 3.0,
-    "species": 40.0,
-    "rare_survived": 25.0,
+    "keystone": 3.0,
+    "village_growth": 30.0,
+    "harvests": 5.0,
+    "species": 30.0,
+    "rare_survived": 20.0,
     "villagers_lost": -8.0
   },
   "daily": {
@@ -16,9 +16,9 @@
     "days": 240,
     "fail_villagers": 5,
     "medals": [
-      900,
-      1250,
-      1550
+      850,
+      1100,
+      1400
     ],
     "blurb": "A new island every day, the same for everyone. Survive 240 days with two mutators."
   },
@@ -29,9 +29,9 @@
     "days": 360,
     "fail_villagers": 5,
     "medals": [
-      1300,
-      1800,
-      2300
+      1200,
+      1500,
+      1900
     ],
     "blurb": "A bigger island all week long: 360 days with three mutators."
   },
@@ -43,7 +43,7 @@
     "medals": [
       1600,
       2300,
-      3200
+      3000
     ],
     "census_start": 6,
     "census_step": 1,

@@ -793,7 +793,7 @@ func _modes(sz: Vector2) -> Control:
 	var th := UiKit.hbox(10)
 	tip.add_child(th)
 	th.add_child(UiKit.icon("info", 20, UiKit.AMBER_DARK))
-	th.add_child(UiKit.wrap_label("Score counts days survived, island health, peak villagers, harvests, wildlife and rare events weathered, "
+	th.add_child(UiKit.wrap_label("Score counts days survived, island health, how much the village grew, harvests, wildlife and rare events weathered, "
 		+ "minus villagers lost, times the mutator bonus.", "Caption"))
 	th.get_child(1).size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	body.add_child(tip)

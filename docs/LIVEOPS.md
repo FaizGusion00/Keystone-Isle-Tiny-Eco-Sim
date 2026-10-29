@@ -31,12 +31,21 @@ climate_rain, climate_storm, climate_fire, degrade`.
    seeded-mode determinism, scoring/medals, endless census, Progress merge and the perf bar with
    rare events on (test budget 4 ms/tick at 32×32 and 16 ms at 64×64; measured ≈0.9 ms and
    ≈3.7 ms on the build box — keep it near those numbers, not just under the budget).
-4. **Look at it:** `tools/screenshots.sh` renders every screen at landscape, portrait and desktop
+4. **Balance check (score / medal changes):** `godot --headless --path . -s tools/balance.gd` plays 10
+   daily, weekly and endless islands twice — untouched ("idle") and with a simple scripted steward
+   (farms, a house when food allows, restoring bare land) — and prints scores and medals. Rule of
+   thumb used for 1.0: **idle never earns bronze**, the scripted steward lands mostly bronze/silver,
+   gold needs better play than the script (dams, forest management, more houses). Measured for 1.0:
+   daily idle 523–782 vs steward 728–1271 (medals 850/1100/1400); weekly idle 712–1122 vs steward
+   1159–2107 (1200/1500/1900); endless idle 1049–1384 vs steward 2038–2526 (1600/2300/3000).
+   `tools/smoke.gd` plays every mode for 150 days through the real game scene and checks
+   save → reload → same checksum, catch-up after time away, and that a paused game stays frozen.
+5. **Look at it:** `tools/screenshots.sh` renders every screen at landscape, portrait and desktop
    and prints script errors / exit leaks; check the Modes, Journal and Codex screens.
-5. **Bump `SaveSystem.CONTENT_VERSION`** only if existing saves would *mean* something different
+6. **Bump `SaveSystem.CONTENT_VERSION`** only if existing saves would *mean* something different
    (e.g. a renamed mutator id). Pure additions don't need it. Format changes bump
    `SaveSystem.VERSION` / `Progress.VERSION` and add a migration + fixture test.
-6. Ship in an app update; note the change in the store "What's new".
+7. Ship in an app update; note the change in the store "What's new".
 
 ### Golden rules (determinism & fairness)
 - **Never remove, reorder or edit a shipped mutator** — Daily/Weekly islands are regenerated from
