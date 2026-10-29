@@ -186,7 +186,10 @@ var _coach_card: PanelContainer
 var _coach_text: Label
 var _coach_step_label: Label
 var _coach_next: Button
-var _coach_steps: Array = []
+var _coach_steps: Array = []    ## [target getter, title, one line]
+var _coach_title: Label
+var _coach_arrow: CoachArrow
+var _coach_scrim: CoachScrim
 var _coach_i := -1
 
 
@@ -1741,6 +1744,7 @@ func dismiss_popup() -> void:
 
 func clear_popups() -> void:
 	_popup_queue.clear()
+	_coach_pending = false
 	popup.visible = false
 	_scrim.visible = false
 
@@ -1759,23 +1763,33 @@ func _build_coach() -> void:
 	_coach.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	_coach.visible = false
 	root.add_child(_coach)
+	# dim everything but the highlighted control (four strips around a cut-out)
+	_coach_scrim = CoachScrim.new()
+	_coach_scrim.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_coach.add_child(_coach_scrim)
 	_coach_ring = Panel.new()
 	_coach_ring.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	var ring := UiKit.box(Color(UiKit.AMBER, 0.08), 20, 0, UiKit.AMBER, 0, 4)
 	_coach_ring.add_theme_stylebox_override("panel", ring)
 	_coach.add_child(_coach_ring)
+	_coach_arrow = CoachArrow.new()
+	_coach_arrow.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_coach.add_child(_coach_arrow)
 	_coach_card = UiKit.card()
-	_coach_card.custom_minimum_size = Vector2(360, 0)
+	_coach_card.custom_minimum_size = Vector2(340, 0)
 	_coach.add_child(_coach_card)
-	var col := UiKit.vbox(10)
+	var col := UiKit.vbox(8)
 	_coach_card.add_child(col)
 	var head := UiKit.hbox(8)
 	head.add_child(UiKit.icon("compass", 20, UiKit.AMBER))
+	_coach_title = UiKit.label("", 20, "")
+	_coach_title.add_theme_font_override("font", UiKit.font(true, 700))
+	_coach_title.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	head.add_child(_coach_title)
 	_coach_step_label = UiKit.label("", 0, "Caption")
-	_coach_step_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	head.add_child(_coach_step_label)
 	col.add_child(head)
-	_coach_text = UiKit.wrap_label("", "", 320)
+	_coach_text = UiKit.wrap_label("", "", 300)
 	_coach_text.add_theme_font_size_override("font_size", 17)
 	col.add_child(_coach_text)
 	var btns := UiKit.hbox(8)
@@ -1797,14 +1811,20 @@ func queue_coach() -> void:
 		start_coach()
 
 
+## Five short tips in the order a first-time player needs them: what to aim for, what to watch,
+## how to act, how time works, and where the "why" lives. Each is a title plus one line.
 func start_coach() -> void:
 	_coach_steps = [
-		[func() -> Control: return _chips_flow, "These are your island's vital signs: villagers, food, water, fish, goats, labor and wood - and the heart meter is overall island health."],
-		[func() -> Control: return _obj_card if _obj_card.visible else _day_card, "Your goals live here. Tick them all off before the deadline to win stars."],
-		[func() -> Control: return _tool_buttons[Tool.BUILD_FARM], "Pick a tool, then tap the island. Farms must be near the village and cost labor and wood (shown under each tool)."],
-		[func() -> Control: return _tool_buttons[Tool.INSPECT], "Inspect any tile to see its soil, water and plants."],
-		[func() -> Control: return events_button, "Everything has a cause. Open History and tap an event to see the chain of why it happened."],
-		[func() -> Control: return _speed_card, "Pause, play or fast-forward time here. Seasons bring rain, storms and dry spells."],
+		[func() -> Control: return _obj_card if _obj_card.visible else _day_card, "Your goals",
+			"Finish these before the deadline to earn stars."],
+		[func() -> Control: return _chips_flow, "Island vitals",
+			"People, food, water, fish, goats, labor and wood. The heart is overall health."],
+		[func() -> Control: return _tool_buttons[Tool.BUILD_FARM], "Build",
+			"Tap Farm, then a grassy tile near the village. Costs are under each tool."],
+		[func() -> Control: return _speed_card, "Time",
+			"Pause or fast-forward. Time is paused while these tips are open."],
+		[func() -> Control: return events_button, "Why did that happen?",
+			"History explains every event. Tap one to see its causes."],
 	]
 	_coach.visible = true
 	_coach_go(0)
@@ -1819,8 +1839,9 @@ func _coach_go(i: int) -> void:
 		end_coach()
 		return
 	_coach_i = i
-	_coach_text.text = _coach_steps[i][1]
-	_coach_step_label.text = "Tip %d of %d" % [i + 1, _coach_steps.size()]
+	_coach_title.text = _coach_steps[i][1]
+	_coach_text.text = _coach_steps[i][2]
+	_coach_step_label.text = "%d / %d" % [i + 1, _coach_steps.size()]
 	_coach_next.text = "Got it" if i == _coach_steps.size() - 1 else "Next"
 	_place_coach()
 	call_deferred("_place_coach")
@@ -1840,18 +1861,74 @@ func _place_coach() -> void:
 		r.size.y = _chips_flow.get_combined_minimum_size().y + 16
 	_coach_ring.position = r.position
 	_coach_ring.size = r.size
-	_coach_card.reset_size()
 	var sz := root.size
+	_coach_scrim.position = Vector2.ZERO
+	_coach_scrim.size = sz
+	_coach_scrim.hole = r
+	_coach_card.reset_size()
 	var cs := _coach_card.size
-	var p := Vector2(r.get_center().x - cs.x * 0.5, r.end.y + 14)
+	var below := true
+	var p := Vector2(r.get_center().x - cs.x * 0.5, r.end.y + 22)
 	if p.y + cs.y > sz.y - 10:
-		p.y = r.position.y - cs.y - 14
+		p.y = r.position.y - cs.y - 22
+		below = false
 	p.x = clampf(p.x, 10, sz.x - cs.x - 10)
 	p.y = clampf(p.y, 10, sz.y - cs.y - 10)
 	_coach_card.position = p
+	# arrow from the card's edge to the highlighted control
+	var tip_x := clampf(r.get_center().x, p.x + 24, p.x + cs.x - 24)
+	_coach_arrow.point_down = not below
+	_coach_arrow.size = Vector2(28, 16)
+	_coach_arrow.position = Vector2(tip_x - 14, r.end.y + 6) if below else Vector2(tip_x - 14, r.position.y - 22)
 
 
 func end_coach() -> void:
 	_coach.visible = false
 	_coach_i = -1
 	coach_finished.emit()
+
+
+## The little triangle that ties a coach card to the control it is about.
+class CoachArrow extends Control:
+	var point_down := false:
+		set(v):
+			point_down = v
+			queue_redraw()
+
+	func _draw() -> void:
+		var w := size.x
+		var h := size.y
+		var pts := PackedVector2Array([Vector2(0, h), Vector2(w, h), Vector2(w * 0.5, 0)]) if not point_down \
+			else PackedVector2Array([Vector2(0, 0), Vector2(w, 0), Vector2(w * 0.5, h)])
+		draw_colored_polygon(pts, UiKit.AMBER)
+
+
+## Dims the screen except a rounded hole around the highlighted control.
+class CoachScrim extends Control:
+	const RADIUS := 20.0
+	const DIM := Color(0.04, 0.08, 0.09, 0.5)
+	var hole := Rect2():
+		set(v):
+			hole = v
+			queue_redraw()
+
+	func _draw() -> void:
+		var r := hole
+		var s := size
+		draw_rect(Rect2(0, 0, s.x, r.position.y), DIM)
+		draw_rect(Rect2(0, r.end.y, s.x, s.y - r.end.y), DIM)
+		draw_rect(Rect2(0, r.position.y, r.position.x, r.size.y), DIM)
+		draw_rect(Rect2(r.end.x, r.position.y, s.x - r.end.x, r.size.y), DIM)
+		var rad := minf(RADIUS, minf(r.size.x, r.size.y) * 0.5)
+		# fill each square corner of the hole outside its rounded arc
+		var corners := [[r.position, Vector2(1, 1)], [Vector2(r.end.x, r.position.y), Vector2(-1, 1)],
+			[r.end, Vector2(-1, -1)], [Vector2(r.position.x, r.end.y), Vector2(1, -1)]]
+		for c in corners:
+			var p: Vector2 = c[0]
+			var d: Vector2 = c[1]
+			var centre := p + d * rad
+			var pts := PackedVector2Array([p])
+			for k in 9:
+				var a := float(k) / 8.0 * PI * 0.5
+				pts.append(centre - Vector2(d.x * cos(a), 0) * rad - Vector2(0, d.y * sin(a)) * rad)
+			draw_colored_polygon(pts, DIM)

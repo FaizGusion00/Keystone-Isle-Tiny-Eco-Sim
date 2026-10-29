@@ -97,7 +97,34 @@ func test_coach_marks_walk_through_and_end() -> void:
 		main.hud._coach_next.pressed.emit()
 		guard += 1
 	assert_false(main.hud.coach_active(), "coach ends after the last tip")
-	assert_true(guard >= 5 and guard <= 8, "about six tips (%d)" % guard)
+	assert_true(guard >= 4 and guard <= 6, "five short tips (%d)" % guard)
+	_free(main)
+
+
+func test_coach_tips_are_short_point_at_target_and_hold_time() -> void:
+	var main := _main()
+	main.start_tutorial()
+	main._process(0.016)
+	assert_true(main.clock.teaching and not main.clock.can_tick(), "the intro popup holds the clock")
+	while main.hud.popup_text() != "":
+		main.hud.dismiss_popup()
+	assert_true(main.hud.coach_active(), "tips follow the intro")
+	main._process(0.016)
+	assert_false(main.clock.can_tick(), "tips hold the clock")
+	for i in main.hud._coach_steps.size():
+		main.hud._coach_go(i)
+		var line: String = main.hud._coach_steps[i][2]
+		assert_true(line.length() <= 90, "tip %d is one short line (%d chars)" % [i, line.length()])
+		var ring: Rect2 = Rect2(main.hud._coach_ring.position, main.hud._coach_ring.size)
+		var arrow: Rect2 = Rect2(main.hud._coach_arrow.position, main.hud._coach_arrow.size)
+		var card: Rect2 = Rect2(main.hud._coach_card.position, main.hud._coach_card.size)
+		assert_true(arrow.grow(10).intersects(ring), "tip %d arrow touches the highlight" % i)
+		assert_true(arrow.grow(10).intersects(card), "tip %d arrow touches the card" % i)
+		assert_false(card.intersects(ring.grow(-4)), "tip %d card does not cover its target" % i)
+	main.hud.end_coach()
+	main._process(0.016)
+	assert_false(main.clock.teaching, "time runs once the tips are done")
+	assert_true(main.clock.can_tick())
 	_free(main)
 
 

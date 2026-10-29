@@ -13,6 +13,7 @@ var _menu_view := {}  ## camera pos/zoom saved while the title menu frames the i
 @onready var hud: Hud = $HUD
 @onready var clock: SimClock = $Clock
 var ambience: Ambience
+var _teaching := false  ## tutorial intro / coach tips still on screen: hold the clock
 var audio: AudioDirector
 var screens: Screens
 var settings := GameSettings.new()
@@ -209,6 +210,7 @@ func start_tutorial() -> void:
 	set_simulation(s)
 	set_speed(SimClock.Speed.NORMAL)
 	hud.show_popup("Tutorial: " + s.scenario.title(), s.scenario.intro_text(), "compass")
+	_teaching = true  # the clock waits until the intro and the tips are read
 	if bool(settings.get_value("show_tutorial")):
 		hud.queue_coach()
 	autosave()
@@ -389,6 +391,10 @@ func _land_bounds() -> Rect2:
 
 func set_simulation(s: Simulation) -> void:
 	hud.clear_popups()
+	if hud.coach_active():
+		hud.end_coach()
+	_teaching = false
+	clock.teaching = false
 	sim = s
 	catch_up = null
 	_ach_tick = -100
@@ -768,6 +774,9 @@ func drain_audio(guard_ms := 3000) -> void:
 
 
 func _process(delta: float) -> void:
+	if _teaching:
+		_teaching = hud.coach_active() or hud.popup.visible or hud._coach_pending
+	clock.teaching = _teaching
 	if screens != null and screens.current == "menu" and not UiKit.reduce_motion and sim != null:
 		# slow cinematic drift around the framed island behind the title screen (fades in after the framing tween)
 		_menu_pan += delta * 0.12

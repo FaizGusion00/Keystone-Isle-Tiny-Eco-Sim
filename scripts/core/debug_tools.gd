@@ -6,6 +6,7 @@ extends RefCounted
 ##            [--tutorial] [--restore] [--away=SECONDS]
 ##            [--farms=N] [--farms-at=x,y;x,y] [--dams=N] [--until=EVENT_TYPE_NAME] [--no-results] [--overlay=0..4] [--history[=EVENT_TYPE_NAME]]
 ##            [--focus=village|dam|event|x,y] [--select=village|dam|event|x,y]  (dam = last --dams tile, event = the --until hit)
+##            [--coach=STEP]  (dismiss the intro and open coach tip STEP, 0-based)
 ##            [--perf=FRAMES]  (render FRAMES frames while the sim plays, print frame/render timings, quit)
 
 
@@ -107,6 +108,10 @@ static func handle_cmdline(main: Node) -> void:
 					sel = id
 					break
 		main.hud.show_events(main.sim.events, sel)
+	if args.has("coach"):
+		main.hud.clear_popups()
+		main.hud.start_coach()
+		main.hud._coach_go(int(args["coach"]))
 	if args.has("focus"):
 		var fc: Vector2i = main.sim.world.coords(main.sim.world.settlement_index)
 		if marks.has(String(args["focus"])):

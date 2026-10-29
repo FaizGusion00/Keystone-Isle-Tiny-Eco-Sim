@@ -16,6 +16,7 @@ var speed: int = Speed.NORMAL
 var _accum := 0.0
 var blocked := false  ## true while suspended (app in background) or catching up
 var held := false     ## true while a menu / pause screen is open
+var teaching := false ## true while the tutorial intro / coach tips are up (nothing happens unread)
 
 
 func ticks_per_second() -> float:
@@ -42,4 +43,4 @@ func _process(delta: float) -> void:
 
 
 func can_tick() -> bool:
-	return not blocked and not held
+	return not blocked and not held and not teaching
