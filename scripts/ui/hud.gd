@@ -134,6 +134,13 @@ const MINOR_TYPES := [EventLog.Type.EROSION]
 # toasts
 var _toasts: VBoxContainer
 var _last_toast := ""
+# award banner: achievements / unlocks / level-ups, shown one at a time (never stacked)
+var _award: PanelContainer
+var _award_icon: PanelContainer
+var _award_title: Label
+var _award_sub: Label
+var _award_queue: Array[PackedStringArray] = []
+var _award_busy := false
 
 # popup
 var popup: PanelContainer
@@ -170,6 +177,7 @@ func _ready() -> void:
 	_build_legend()
 	_build_events_panel()
 	_build_toasts()
+	_build_award()
 	_build_popup()
 	_build_coach()
 	for owned in [_inspector, _legend, events_panel, popup, _coach_card, _side]:
@@ -306,6 +314,7 @@ func _layout(sz: Vector2) -> void:
 	popup.reset_size()
 	popup.position = (sz - popup.size) * 0.5
 	_coach.size = sz
+	_place_award()
 	if _coach_i >= 0:
 		_place_coach()
 
@@ -430,7 +439,7 @@ func set_status(ws: WorldState) -> void:
 	_chip("water", "%d%%" % roundi(ws.water_ema * 100.0), ws.water_event >= 0)
 	_chip("fish", "%d" % roundi(ws.fish), ws.fish_event >= 0)
 	_chip("goats", "%d" % roundi(ws.goats), ws.goats_event >= 0)
-	var lab_cap := 10.0 + ws.villagers
+	var lab_cap := Simulation.LABOR_CAP_BASE + ws.villagers
 	_chip("labor", "%d" % floori(ws.labor) if ws.free_build == false else "∞", false)
 	_chip("wood", "%d" % floori(ws.wood) if ws.free_build == false else "∞", false)
 	_chips["labor"]["panel"].tooltip_text = "Labor: %d of %d. Spent by tools, regrows each day." % [floori(ws.labor), roundi(lab_cap)]
@@ -704,9 +713,11 @@ func tile_rows(sim: Simulation, t: Vector2i) -> Array:
 			rows.append(["droplet", "Water", "%d%%" % roundi(ws.water_ema * 100.0), ws.water_ema, UiKit.SKY])
 			rows.append(["beef", "Food stored", "%d" % roundi(ws.food_store), -1.0])
 			rows.append(["fish", "Fish", "%d" % roundi(ws.fish), -1.0])
+			_flood_row(sim, i, rows)
 			rows.append(["sprout", "Farms · harvests", "%d · %d" % [ws.count_structures(WorldState.Structure.FARM), ws.harvests], -1.0])
 			return rows
 		WorldState.Structure.FARM:
+			_flood_row(sim, i, rows)
 			rows.append(["wheat", "Crop growth", "%d%%" % roundi(ws.crop_growth[i] * 100.0), ws.crop_growth[i], UiKit.AMBER])
 			rows.append(["droplet", "Soil moisture", "%d%%" % roundi(ws.soil_moisture[i] * 100.0), ws.soil_moisture[i],
 				UiKit.CORAL if ws.crop_stress[i] > 0 else UiKit.SKY])
@@ -716,7 +727,10 @@ func tile_rows(sim: Simulation, t: Vector2i) -> Array:
 			return rows
 		WorldState.Structure.DAM:
 			rows.append(["waves", "Water held", "%d%%" % roundi(clampf(ws.reservoir[i], 0.0, 1.0) * 100.0), clampf(ws.reservoir[i], 0.0, 1.0), UiKit.SKY])
-			rows.append(["fish", "Blocks fish", "yes" if sim.dam_blocks_fish(t.x, t.y) else "no", -1.0])
+			if sim.dam_blocks_fish(t.x, t.y):
+				rows.append(["fish", "River dam", "blocks fish", -1.0])
+			else:
+				rows.append(["fish", "Small stream", "fish pass", -1.0])
 			return rows
 	if LandType.is_water(ws.land_type[i]):
 		var mud := clampf(ws.sediment[i] / 0.08, 0.0, 1.0)
@@ -726,9 +740,21 @@ func tile_rows(sim: Simulation, t: Vector2i) -> Array:
 	rows.append(["leaf", "Plant cover", "%d%%" % roundi(ws.vegetation_cover[i] * 100.0), ws.vegetation_cover[i], UiKit.LEAF])
 	rows.append(["mountain", "Topsoil", "%d%%" % roundi(ws.soil_depth[i] * 100.0), ws.soil_depth[i], Color("9a7650")])
 	rows.append(["gauge", "Elevation", "%d m" % roundi(ws.elevation[i] * 120.0), ws.elevation[i], UiKit.INK_FAINT])
+	_flood_row(sim, i, rows)
 	if sw > 0.01 and str(rows[0][1]) != "Flood water":
 		rows.append(["droplets", "Runoff", "%.0f mm" % (ws.surface_water[i] * 1000.0), -1.0])
 	return rows
+
+
+## "River level" row for floodplain tiles: how close the stream is to flooding this tile.
+func _flood_row(sim: Simulation, i: int, rows: Array) -> void:
+	var r := sim.floodplain[i] if i < sim.floodplain.size() else -1
+	if r < 0:
+		return
+	var level := clampf(sim.river_stage(r) / sim.flood_stage_for(i), 0.0, 1.5)
+	var label := "Floodplain" if sim.flood_risk(i) == 2 else "High bank"
+	rows.append(["waves", label, "river %d%%" % roundi(level * 100.0), minf(level, 1.0),
+		UiKit.CORAL if level >= 0.8 else UiKit.SKY])
 
 
 ## Inspector text (plain, for tests / accessibility).
@@ -953,9 +979,9 @@ func _build_events_panel() -> void:
 	var title := UiKit.label("History", 0, "Heading")
 	title.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	head.add_child(title)
-	_minor_toggle = UiKit.button("Erosion", Vector2(0, 44), "mountain", "Segment")
+	_minor_toggle = UiKit.button("Show soil loss", Vector2(0, 44), "mountain", "Segment")
 	_minor_toggle.toggle_mode = true
-	_minor_toggle.tooltip_text = "Also list small soil-erosion events"
+	_minor_toggle.tooltip_text = "Also list the many small soil-erosion events (hidden by default)"
 	_minor_toggle.toggled.connect(func(_on: bool) -> void:
 		if _event_log != null:
 			show_events(_event_log, _selected_event))
@@ -1197,6 +1223,83 @@ func toast(msg: String, seconds: float = 2.5, icon_name: String = "", bad: bool 
 
 func toast_text() -> String:
 	return _last_toast
+
+
+func _build_award() -> void:
+	_award = UiKit.card("Award")
+	_award.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_award.visible = false
+	_award.set_meta("layout_owned", true)
+	var row := UiKit.hbox(12)
+	_award.add_child(row)
+	_award_icon = UiKit.icon_badge("award", UiKit.AMBER_SOFT, UiKit.AMBER_DARK, 44)
+	row.add_child(_award_icon)
+	var col := UiKit.vbox(0)
+	row.add_child(col)
+	_award_sub = UiKit.label("", 14, "Caption")
+	_award_sub.add_theme_color_override("font_color", UiKit.AMBER_DARK)
+	col.add_child(_award_sub)
+	_award_title = UiKit.label("", 0, "Subheading")
+	col.add_child(_award_title)
+	root.add_child(_award)
+
+
+## Queues a celebratory banner (achievement, unlock, level up). Banners play one after another
+## and wait while a full-screen menu hides the HUD.
+func award(title: String, kind: String = "Achievement unlocked", icon_name: String = "award") -> void:
+	_award_queue.append(PackedStringArray([title, kind, icon_name]))
+	_next_award()
+
+
+func award_pending() -> int:
+	return _award_queue.size() + (1 if _award_busy else 0)
+
+
+func _next_award() -> void:
+	if _award_busy or _award_queue.is_empty() or not is_inside_tree():
+		return
+	if not visible:
+		get_tree().create_timer(0.5).timeout.connect(_next_award)
+		return
+	_award_busy = true
+	var a: PackedStringArray = _award_queue.pop_front()
+	_award_title.text = a[0]
+	_award_sub.text = a[1].to_upper()
+	for c in _award_icon.get_children():
+		_award_icon.remove_child(c)
+		c.queue_free()
+	_award_icon.add_child(UiKit.icon(a[2], 24, UiKit.AMBER_DARK))
+	_last_toast = a[1] + ": " + a[0]
+	_award.visible = true
+	_award.reset_size()
+	_place_award()
+	var hold := 2.6
+	var tw := _award.create_tween()
+	if UiKit.reduce_motion:
+		_award.modulate.a = 1.0
+		tw.tween_interval(hold)
+	else:
+		_award.pivot_offset = _award.size * 0.5
+		_award.modulate.a = 0.0
+		_award.scale = Vector2(0.7, 0.7)
+		tw.set_parallel(true)
+		tw.tween_property(_award, "modulate:a", 1.0, 0.2)
+		tw.tween_property(_award, "scale", Vector2.ONE, 0.45).set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT)
+		tw.chain().tween_interval(hold)
+	tw.chain().tween_property(_award, "modulate:a", 0.0, 0.3)
+	tw.chain().tween_callback(func() -> void:
+		_award.visible = false
+		_award_busy = false
+		_next_award())
+
+
+func _place_award() -> void:
+	if _award == null or not _award.visible:
+		return
+	var sz := root.size
+	_award.reset_size()
+	var y := sz.y * (0.30 if portrait else 0.22)
+	_award.position = Vector2((sz.x - _award.size.x) * 0.5, y)
 
 
 # ================================================================== popup

@@ -221,3 +221,38 @@ func test_app_lifecycle_suspend_resume_and_relaunch() -> void:
 	tree.root.remove_child(main2)
 	main2.free()
 	SaveSystem.delete_all(p)
+
+
+func test_catch_up_keeps_running_after_a_won_island() -> void:
+	var sim := Simulation.create(Scenario.TUTORIAL_SEED, 32)
+	sim.scenario = Scenario.tutorial()
+	sim.scenario.status = Scenario.Status.WON  # player chose "Keep playing"
+	var cu := CatchUp.new()
+	cu.begin(sim, 50)
+	cu.run_all()
+	assert_eq(sim.world.tick, 50, "a finished island still lives on while you are away")
+
+
+func test_menu_or_pause_screen_freezes_time_away() -> void:
+	var p := _path("held")
+	var tree := Engine.get_main_loop() as SceneTree
+	var scene: PackedScene = load("res://scenes/world/main.tscn")
+	var main = scene.instantiate()
+	main.save_path = p
+	tree.root.add_child(main)
+	main.hud.dismiss_popup()
+	main.pause_game()
+	assert_true(main.clock.held)
+	main.suspend()
+	assert_true(bool(SaveSystem.load_game(p)["meta"].get("held", false)), "held state saved in meta")
+	main._suspended_at -= 100.0
+	main.resume()
+	assert_eq(main.catch_up, null, "pause screen open: no time passes")
+	main.resume_game()
+	main.suspend()
+	main._suspended_at -= 10.0
+	main.resume()
+	assert_true(main.catch_up != null and main.catch_up.total == 20, "running game catches up")
+	tree.root.remove_child(main)
+	main.free()
+	SaveSystem.delete_all(p)

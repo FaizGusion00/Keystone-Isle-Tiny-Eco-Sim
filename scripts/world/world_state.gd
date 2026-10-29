@@ -191,7 +191,7 @@ func count_structures(s: int) -> int:
 func housing_capacity() -> int:
 	if settlement_index < 0:
 		return 0
-	return 12 + 4 * structure.count(Structure.HOUSE)
+	return Simulation.HOUSING_BASE + Simulation.HOUSE_CAPACITY * structure.count(Structure.HOUSE)
 
 
 ## SHA-256 over all state fields; used by determinism tests and save checks.

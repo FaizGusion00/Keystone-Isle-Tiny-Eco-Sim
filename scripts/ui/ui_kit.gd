@@ -17,6 +17,7 @@ const TEAL_DARK := Color("235e52")
 const TEAL_SOFT := Color("d7ebe4")
 const AMBER := Color("e0a33a")
 const AMBER_SOFT := Color("f7e6c4")
+const AMBER_DARK := Color("9a6416")
 const CORAL := Color("d0603f")
 const CORAL_SOFT := Color("f6dcd2")
 const LEAF := Color("5f9e45")
@@ -159,6 +160,15 @@ static func make_theme() -> Theme:
 	chip.content_margin_left = 12
 	chip.content_margin_right = 14
 	t.set_stylebox("panel", "Chip", chip)
+	t.set_type_variation("Award", "PanelContainer")
+	var aw := box(Color("fff8e8"), 22, 14, Color(AMBER, 0.85), 14)
+	aw.border_width_left = 2
+	aw.border_width_right = 2
+	aw.border_width_top = 2
+	aw.border_width_bottom = 2
+	aw.content_margin_left = 16
+	aw.content_margin_right = 24
+	t.set_stylebox("panel", "Award", aw)
 	t.set_type_variation("ChipWarn", "PanelContainer")
 	var chipw := chip.duplicate() as StyleBoxFlat
 	chipw.bg_color = CORAL_SOFT

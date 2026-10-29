@@ -132,3 +132,47 @@ func test_every_event_type_has_an_icon() -> void:
 	for t in EventLog.TYPE_NAMES:
 		var icon := Hud.event_icon(t)
 		assert_true(ResourceLoader.exists("res://assets/icons/%s.svg" % icon), "icon %s for %s" % [icon, EventLog.TYPE_NAMES[t]])
+
+
+func test_achievement_banners_queue_one_at_a_time() -> void:
+	var main := _main()
+	main.hud.award("First")
+	main.hud.award("Second")
+	main.hud.award("Third")
+	assert_eq(main.hud.award_pending(), 3)
+	assert_true(main.hud._award.visible, "first banner showing")
+	assert_eq(main.hud._award_title.text, "First")
+	assert_eq(main.hud._award_queue.size(), 2, "the rest wait their turn instead of stacking")
+	_free(main)
+
+
+func test_dam_and_flood_rows_are_accurate() -> void:
+	var main := _main()
+	var sim: Simulation = ScenarioCatalog.create_sim(ScenarioCatalog.get_def("floodplain"))
+	sim.world.free_build = true
+	main.set_simulation(sim)
+	var ws := sim.world
+	var river := -1
+	var brook := -1
+	for i in ws.tile_count():
+		var c := ws.coords(i)
+		if sim.tile_rule(Simulation.Action.BUILD_DAM, c.x, c.y) != "":
+			continue
+		if river < 0 and sim.dam_blocks_fish(c.x, c.y):
+			river = i
+		elif brook < 0 and not sim.dam_blocks_fish(c.x, c.y):
+			brook = i
+	assert_true(river >= 0 and brook >= 0, "both kinds of dam site exist")
+	for i in [river, brook]:
+		var c := ws.coords(i)
+		assert_true(sim.apply_action(Simulation.Action.BUILD_DAM, c.x, c.y))
+	var tr: String = main.hud.tile_text(sim, ws.coords(river))
+	var tb: String = main.hud.tile_text(sim, ws.coords(brook))
+	assert_true(tr.contains("River dam: blocks fish"), tr)
+	assert_true(tb.contains("Small stream: fish pass"), tb)
+	var fp := -1
+	for i in ws.tile_count():
+		if fp < 0 and sim.flood_risk(i) == 2 and ws.structure[i] == WorldState.Structure.NONE and not LandType.is_water(ws.land_type[i]):
+			fp = i
+	assert_true(main.hud.tile_text(sim, ws.coords(fp)).contains("Floodplain: river"), "floodplain tiles show the river level")
+	_free(main)

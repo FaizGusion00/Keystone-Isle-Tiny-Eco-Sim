@@ -15,6 +15,7 @@ var remaining := 0
 var total := 0
 var start_tick := 0
 var before := {}
+var start_status := -1   ## scenario status at begin: a won island you keep playing still catches up
 
 
 static func compute_ticks(elapsed_seconds: float, speed: int, cap: int = MAX_TICKS) -> int:
@@ -28,6 +29,7 @@ func begin(s: Simulation, ticks: int) -> void:
 	remaining = maxi(ticks, 0)
 	total = remaining
 	start_tick = s.world.tick
+	start_status = s.scenario.status if s.scenario != null else -1
 	before = {"villagers": s.world.villagers, "food": s.world.food_store, "fish": s.world.fish, "goats": s.world.goats}
 
 
@@ -35,13 +37,14 @@ func active() -> bool:
 	return remaining > 0
 
 
-## Runs up to `batch` ticks; returns true when finished. Stops early if the scenario ends.
+## Runs up to `batch` ticks; returns true when finished. Stops early if the scenario ends
+## (status changes during the catch-up) so the result screen shows the day it happened.
 func process_batch(batch: int = BATCH) -> bool:
 	var n := mini(batch, remaining)
 	for k in n:
 		sim.step()
 		remaining -= 1
-		if sim.scenario != null and sim.scenario.status != Scenario.Status.RUNNING:
+		if sim.scenario != null and sim.scenario.status != start_status:
 			remaining = 0
 			break
 	return remaining == 0

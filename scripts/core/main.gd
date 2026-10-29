@@ -277,7 +277,7 @@ func load_slot(path: String) -> void:
 
 
 func _meta() -> Dictionary:
-	return {"saved_at": _now(), "speed": clock.speed, "day": sim.world.tick, "villagers": sim.world.villagers,
+	return {"saved_at": _now(), "speed": clock.speed, "held": clock.held, "day": sim.world.tick, "villagers": sim.world.villagers,
 		"keystone": roundi(sim.world.keystone),
 		"title": sim.scenario.title() if sim.scenario != null else "Sandbox"}
 
@@ -295,6 +295,7 @@ func set_simulation(s: Simulation) -> void:
 	hud.clear_popups()
 	sim = s
 	catch_up = null
+	_ach_tick = -100
 	clock.blocked = _suspended
 	_scenario_status = sim.scenario.status if sim.scenario != null else -1
 	hud.set_objective(sim.scenario.objective_text(sim.world) if sim.scenario != null else "")
@@ -349,9 +350,18 @@ func _on_tile_tapped(screen_pos: Vector2) -> void:
 			UiKit.haptic(18)
 			hud.set_status(sim.world)
 			hud.update_objectives(sim)
+			_warn_floodplain(action, t)
 	else:
 		AudioDirector.sfx("ui_click", 1.1, -6.0)
 	select_tile(t)
+
+
+## Building on a low river bank is allowed (fertile silt!) but the player should know the risk.
+func _warn_floodplain(action: int, t: Vector2i) -> void:
+	if action != Simulation.Action.BUILD_FARM and action != Simulation.Action.BUILD_HOUSE:
+		return
+	if sim.flood_risk(sim.world.index(t.x, t.y)) == 2:
+		hud.toast("Built on a floodplain: the river may flood it in storms. Forests and dams upstream help.", 4.0, "waves", true)
 
 
 const ACTION_SFX := {
@@ -415,7 +425,8 @@ func _check_achievements(force: bool) -> Array:
 	var fresh := progress.grant(Achievements.check(sim, progress.stars, progress.achievements))
 	for id in fresh:
 		var info := Achievements.get_info(str(id))
-		hud.toast("Achievement: " + str(info.get("title", id)), 4.0, str(info.get("icon", "award")))
+		hud.award(str(info.get("title", id)), "Achievement unlocked", str(info.get("icon", "award")))
+	if not fresh.is_empty():
 		AudioDirector.sfx("star")
 	if not fresh.is_empty() and persistence:
 		progress.save()
@@ -510,7 +521,9 @@ func restore_from_disk() -> bool:
 	set_speed(speed)
 	if String(r["source"]).ends_with(".bak"):
 		hud.toast("Main save was damaged: restored the backup", 4.0)
-	start_catch_up(CatchUp.compute_ticks(_now() - float(r["saved_at"]), speed))
+	# a game saved while a menu / pause screen held the clock was frozen: nothing to catch up
+	if not bool(r["meta"].get("held", false)):
+		start_catch_up(CatchUp.compute_ticks(_now() - float(r["saved_at"]), speed))
 	return true
 
 
@@ -541,7 +554,9 @@ func resume() -> void:
 		return
 	_suspended = false
 	clock.blocked = false
-	start_catch_up(CatchUp.compute_ticks(_now() - _suspended_at, clock.speed))
+	# time only passes for a running game: a pause or menu screen keeps the island frozen
+	var speed := SimClock.Speed.PAUSED if clock.held else clock.speed
+	start_catch_up(CatchUp.compute_ticks(_now() - _suspended_at, speed))
 
 
 func start_catch_up(ticks: int) -> void:
@@ -608,4 +623,5 @@ func _finish_catch_up(show_summary: bool) -> void:
 	if show_summary and cu.total >= CatchUp.SUMMARY_MIN_TICKS:
 		hud.show_popup("While you were away", cu.summary())
 	_check_scenario()
+	_check_achievements(true)
 	autosave()
