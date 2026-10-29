@@ -128,6 +128,18 @@ var _chain_scroll: ScrollContainer
 var _explain_lines := PackedStringArray()
 var _event_log: EventLog
 var _minor_toggle: Button
+var _tool_more: Button
+var _tool_page := 0
+var _tool_pages := 1
+var _tool_per := 99
+const TOOL_W := 74.0
+const TOOL_MIN_W := 60.0
+var _hist_list_pane: VBoxContainer
+var _hist_detail_pane: VBoxContainer
+var _hist_back: Button
+var _hist_why_icon: TextureRect
+var _hist_two_col := false
+var _hist_detail := false
 var _selected_event := -1
 const MINOR_TYPES := [EventLog.Type.EROSION]
 
@@ -223,10 +235,11 @@ func _layout(sz: Vector2) -> void:
 				tool_bar_row.add_child(btn)
 	_tool_sep.visible = not want_side
 	_side.visible = want_side and not events_panel.visible
+	_fit_tools(w - 20.0)
 	_tool_scroll.custom_minimum_size = Vector2(0, 0)
 	var tb_min := tool_bar_row.get_combined_minimum_size()
 	var tb_w := minf(tb_min.x + 4.0, w - 16.0)
-	_tool_scroll.custom_minimum_size = Vector2(tb_w, tb_min.y + (10.0 if tb_w < tb_min.x else 0.0))
+	_tool_scroll.custom_minimum_size = Vector2(tb_w, tb_min.y)
 	_toolbar.reset_size()
 	_toolbar.position = Vector2(l + (w - _toolbar.size.x) * 0.5, b - _toolbar.size.y)
 	var bottom_y := _toolbar.position.y - 10.0
@@ -283,7 +296,11 @@ func _layout(sz: Vector2) -> void:
 	# --- history drawer
 	var hx := l
 	var hy := top_bottom
-	var hw := minf(520.0, w) if not portrait else w
+	var two := not portrait and w >= 900.0
+	var hw := w if portrait else (minf(980.0, w * 0.74) if two else minf(560.0, w))
+	if two != _hist_two_col:
+		_hist_two_col = two
+		_apply_hist_mode()
 	events_panel.position = Vector2(hx, hy)
 	events_panel.custom_minimum_size = Vector2(hw, 0)
 	events_panel.size = Vector2(hw, maxf(240.0, bottom_y - hy))
@@ -829,6 +846,14 @@ func _build_tool_bar() -> void:
 		else:
 			events_requested.emit())
 	row.add_child(events_button)
+	_tool_more = _tool_button("More", "chevron-right", -1)
+	_tool_more.tooltip_text = "More tools"
+	_tool_more.visible = false
+	_tool_more.pressed.connect(func() -> void:
+		_tool_page = (_tool_page + 1) % maxi(1, _tool_pages)
+		AudioDirector.sfx("ui_click", 1.2, -6.0)
+		relayout())
+	row.add_child(_tool_more)
 	_tool_sep = sep
 	# portrait phones: Layers / History float in a small stack above the toolbar
 	_side = UiKit.card()
@@ -839,6 +864,40 @@ func _build_tool_bar() -> void:
 	_side.visible = false
 	root.add_child(_side)
 	_style_tools()
+
+
+## Fits the toolbar to `avail` px without scrolling: buttons narrow down to a compact width,
+## and if even that does not fit, the tools split into pages behind a "More" button.
+func _fit_tools(avail: float) -> void:
+	var extra: Array = [] if overlay_button.get_parent() != tool_bar_row else [overlay_button, events_button]
+	var n := _tool_buttons.size() + extra.size()
+	var gap := 4.0
+	var sep_w := 9.0 if not extra.is_empty() else 0.0
+	var bw := clampf((avail - sep_w - gap * (n - 1)) / n, TOOL_MIN_W, TOOL_W)
+	var fits := bw * n + gap * (n - 1) + sep_w <= avail + 0.5
+	_tool_pages = 1
+	if not fits:
+		bw = TOOL_MIN_W
+		var per := maxi(2, floori((avail - sep_w - (bw + gap) * (extra.size() + 1)) / (bw + gap)))
+		_tool_per = per
+		_tool_pages = ceili(float(_tool_buttons.size()) / per)
+		_tool_page = mini(_tool_page, _tool_pages - 1)
+		for k in _tool_buttons.size():
+			_tool_buttons[k].visible = k / per == _tool_page
+	else:
+		_tool_page = 0
+		for b in _tool_buttons:
+			b.visible = true
+	_tool_more.visible = _tool_pages > 1
+	(_tool_more.get_child(0).get_child(1) as Label).text = "More" if _tool_page < _tool_pages - 1 else "Back"
+	for b in _tool_buttons + extra + [_tool_more]:
+		(b as Button).custom_minimum_size.x = bw
+		var name := (b as Button).get_child(0).get_child(1) as Label
+		name.add_theme_font_size_override("font_size", 14 if bw >= 68.0 else 12)
+
+
+func tools_fit_without_scroll() -> bool:
+	return tool_bar_row.get_combined_minimum_size().x <= _tool_scroll.custom_minimum_size.x + 1.0
 
 
 func _tool_button(text: String, icon_name: String, t: int) -> Button:
@@ -868,6 +927,9 @@ func _tool_button(text: String, icon_name: String, t: int) -> Button:
 
 func select_tool(t: int) -> void:
 	tool = t
+	if _tool_pages > 1 and t / _tool_per != _tool_page:
+		_tool_page = t / _tool_per  # keyboard shortcut to a tool on another page: flip to it
+		relayout()
 	if t < _tool_buttons.size():
 		_tool_buttons[t].set_pressed_no_signal(true)
 	_style_tools()
@@ -990,25 +1052,66 @@ func _build_events_panel() -> void:
 	close.custom_minimum_size = Vector2(48, 48)
 	close.pressed.connect(hide_events)
 	head.add_child(close)
+	# body: [list | why-chain] side by side on wide screens; on phones a master-detail
+	# pair where tapping an event slides to its why-chain (with a Back button)
+	var body := UiKit.hbox(14)
+	body.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	col.add_child(body)
+	_hist_list_pane = UiKit.vbox(6)
+	_hist_list_pane.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_hist_list_pane.size_flags_stretch_ratio = 1.0
+	body.add_child(_hist_list_pane)
 	var list_scroll := ScrollContainer.new()
 	list_scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	list_scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
-	col.add_child(list_scroll)
+	_hist_list_pane.add_child(list_scroll)
 	_events_list = UiKit.vbox(2)
 	_events_list.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	_events_list.mouse_filter = Control.MOUSE_FILTER_PASS
 	list_scroll.add_child(_events_list)
+	_hist_detail_pane = UiKit.vbox(8)
+	_hist_detail_pane.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_hist_detail_pane.size_flags_stretch_ratio = 1.15
+	body.add_child(_hist_detail_pane)
 	var why_head := UiKit.hbox(6)
-	why_head.add_child(UiKit.icon("circle-help", 18, UiKit.TEAL))
+	_hist_back = UiKit.button("All events", Vector2(0, 44), "chevron-left", "Ghost")
+	_hist_back.pressed.connect(func() -> void: _set_hist_detail(false))
+	why_head.add_child(_hist_back)
+	_hist_why_icon = UiKit.icon("circle-help", 18, UiKit.TEAL)
+	why_head.add_child(_hist_why_icon)
 	why_head.add_child(UiKit.label("Why it happened", 0, "Subheading"))
-	col.add_child(why_head)
+	_hist_detail_pane.add_child(why_head)
 	_chain_scroll = ScrollContainer.new()
-	_chain_scroll.size_flags_vertical = Control.SIZE_FILL  # sized to its chain by _fit_chain
+	_chain_scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	_chain_scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
-	col.add_child(_chain_scroll)
+	_hist_detail_pane.add_child(_chain_scroll)
 	_chain = UiKit.vbox(0)
 	_chain.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	_chain_scroll.add_child(_chain)
+	_apply_hist_mode()
+
+
+## Two columns on wide screens; one pane at a time (list or why-chain) on narrow ones.
+func _apply_hist_mode() -> void:
+	_hist_back.visible = not _hist_two_col
+	_hist_why_icon.visible = _hist_two_col
+	_hist_list_pane.visible = _hist_two_col or not _hist_detail
+	_hist_detail_pane.visible = _hist_two_col or _hist_detail
+
+
+func _set_hist_detail(on: bool) -> void:
+	var changed := on != _hist_detail
+	_hist_detail = on
+	_apply_hist_mode()
+	if changed and not _hist_two_col and not UiKit.reduce_motion:
+		var pane := _hist_detail_pane if on else _hist_list_pane
+		pane.modulate.a = 0.0
+		var tw := pane.create_tween()
+		tw.tween_property(pane, "modulate:a", 1.0, 0.18)
+
+
+func history_showing_detail() -> bool:
+	return _hist_detail_pane.visible
 
 
 ## Fills the history list (newest first) and optionally selects one event.
@@ -1039,6 +1142,7 @@ func show_events(log_: EventLog, select_id: int = -1, limit: int = 60) -> void:
 	else:
 		_selected_event = -1
 		_set_chain_placeholder()
+		_set_hist_detail(false)
 
 
 func _event_row(log_: EventLog, id: int) -> Button:
@@ -1078,19 +1182,13 @@ func _set_chain_placeholder() -> void:
 		_chain.remove_child(c)
 		c.queue_free()
 	var p := UiKit.card("Inset")
-	p.add_child(UiKit.wrap_label("Tap an event above to trace its causes - every link is something the simulation actually recorded.", "Caption", maxf(120.0, events_panel.size.x - 80.0)))
+	p.add_child(UiKit.wrap_label("Tap an event to trace its causes - every link is something the simulation actually recorded.", "Caption", maxf(120.0, _chain_width() - 30.0)))
 	_chain.add_child(p)
-	_fit_chain.call_deferred()
 
 
-## The why-chain takes the height it needs (up to ~60% of the drawer); the list gets the rest.
-func _fit_chain(again: bool = true) -> void:
-	if not is_instance_valid(_chain_scroll):
-		return
-	var cap := maxf(120.0, events_panel.size.y * 0.6)
-	_chain_scroll.custom_minimum_size.y = minf(_chain.get_combined_minimum_size().y, cap)
-	if again:
-		_fit_chain.call_deferred(false)
+func _chain_width() -> float:
+	var w := events_panel.size.x - 40.0
+	return w * 1.15 / 2.15 - 8.0 if _hist_two_col else w
 
 
 func show_explanation(id: int) -> void:
@@ -1101,6 +1199,8 @@ func show_explanation(id: int) -> void:
 		if b is Button:
 			(b as Button).set_pressed_no_signal(int(b.get_meta("event_id", -2)) == id)
 	_explain_lines = _event_log.explain(id)
+	_set_hist_detail(true)
+	_chain_scroll.scroll_vertical = 0
 	for c in _chain.get_children():
 		_chain.remove_child(c)
 		c.queue_free()
@@ -1141,7 +1241,7 @@ func show_explanation(id: int) -> void:
 		var kind := EventLog.kind_of_type(ev_type)
 		var colr: Color = UiKit.CORAL if EventLog.is_bad(ev_type) else KIND_COLORS[kind]
 		crow.add_child(UiKit.icon_badge(event_icon(ev_type), Color(colr, 0.16), colr, 32))
-		var tl := UiKit.wrap_label(text, "", maxf(120.0, events_panel.size.x - indent - 110.0))
+		var tl := UiKit.wrap_label(text, "", maxf(120.0, _chain_width() - indent - 70.0))
 		tl.add_theme_font_size_override("font_size", 16 if k > 0 else 17)
 		if k == 0:
 			tl.add_theme_font_override("font", UiKit.font(false, 650))
@@ -1154,7 +1254,6 @@ func show_explanation(id: int) -> void:
 			var tw := cm.create_tween()
 			tw.tween_property(cm, "modulate:a", 1.0, 0.18).set_delay(0.04 * k)
 		k += 1
-	_fit_chain.call_deferred()
 
 
 func _type_from_text(text: String) -> int:

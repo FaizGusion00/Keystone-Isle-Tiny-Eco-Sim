@@ -176,3 +176,49 @@ func test_dam_and_flood_rows_are_accurate() -> void:
 			fp = i
 	assert_true(main.hud.tile_text(sim, ws.coords(fp)).contains("Floodplain: river"), "floodplain tiles show the river level")
 	_free(main)
+
+
+func test_toolbar_fits_without_scrolling_at_every_layout() -> void:
+	var main := _main()
+	var vp := main.get_viewport()
+	var old: Vector2i = vp.size
+	for sz in [Vector2i(1280, 720), Vector2i(720, 1280), Vector2i(1170, 540), Vector2i(540, 1170)]:
+		for sc in [0.85, 1.0, 1.3]:
+			vp.size = sz
+			main.hud.set_ui_scale(sc)
+			main.hud._layout(main.hud.root.size)
+			assert_true(main.hud.tools_fit_without_scroll(), "toolbar fits at %s x%.2f" % [sz, sc])
+			var r: Rect2 = main.hud._toolbar.get_rect()
+			assert_true(r.position.x >= 0.0 and r.end.x <= main.hud.root.size.x + 0.5, "toolbar on screen %s x%.2f" % [sz, sc])
+			# every tool is reachable (on some page)
+			main.hud.select_tool(7)
+			assert_true(main.hud._tool_buttons[7].visible, "selecting a tool shows its page")
+			main.hud.select_tool(0)
+	vp.size = old
+	main.hud.set_ui_scale(1.0)
+	_free(main)
+
+
+func test_history_is_master_detail_on_narrow_screens() -> void:
+	var main := _main()
+	var vp := main.get_viewport()
+	var old: Vector2i = vp.size
+	for i in 40:
+		main.sim.step()
+	assert_true(main.sim.events.count() > 0, "some events to show")
+	var ev_id: int = main.sim.events.recent(1)[0]
+	vp.size = Vector2i(720, 1280)
+	main.hud.set_ui_scale(1.0)
+	main.hud.show_events(main.sim.events)
+	main.hud._layout(main.hud.root.size)
+	assert_false(main.hud.history_showing_detail(), "portrait opens on the list")
+	main.hud.show_explanation(ev_id)
+	assert_true(main.hud.history_showing_detail(), "picking an event shows its causes")
+	main.hud._hist_back.pressed.emit()
+	assert_false(main.hud.history_showing_detail(), "All events goes back to the list")
+	vp.size = Vector2i(1280, 720)
+	main.hud._layout(main.hud.root.size)
+	assert_true(main.hud._hist_two_col, "wide landscape shows list and causes side by side")
+	assert_true(main.hud._hist_list_pane.visible and main.hud._hist_detail_pane.visible, "both panes visible")
+	vp.size = old
+	_free(main)

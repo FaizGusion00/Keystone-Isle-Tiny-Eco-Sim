@@ -71,6 +71,9 @@ func _ready() -> void:
 		settings.values["reduce_motion"] = true
 	if args.has("--colorblind"):
 		settings.values["colorblind"] = true
+	for a in args:
+		if a.begins_with("--ui-scale="):
+			settings.values["ui_scale"] = float(a.trim_prefix("--ui-scale="))
 	_on_window_resized()
 	apply_settings()
 	set_speed(SimClock.Speed.NORMAL)
