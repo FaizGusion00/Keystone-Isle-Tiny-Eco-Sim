@@ -57,7 +57,7 @@ func _run_all() -> void:
 			inst.current = "%s::%s" % [f.get_basename(), mname]
 			var before := inst.failures.size()
 			var errs_before := _errors.count
-			inst.call(mname)
+			await inst.call(mname)  # tests may await frames
 			if _errors.count > errs_before and not inst.expects_errors:
 				inst.failures.append("%s: %d engine/script error(s) logged (see above)" % [inst.current, _errors.count - errs_before])
 			inst.expects_errors = false

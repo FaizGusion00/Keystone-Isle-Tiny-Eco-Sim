@@ -359,7 +359,7 @@ func cottages_wanted() -> int:
 func _draw_water() -> void:
 	if world == null:
 		return
-	var b := Iso.map_bounds(world.width, world.height).grow(1600.0)
+	var b := Iso.map_bounds(world.width, world.height).grow(4000.0)  # deep enough for the zoomed-out title-menu framing
 	water.draw_rect(b, Color.WHITE)
 
 

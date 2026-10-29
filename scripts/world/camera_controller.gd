@@ -42,6 +42,27 @@ func fit_to(r: Rect2) -> void:
 	zoom = Vector2(z, z)
 
 
+## Frames world rect `r` inside `screen_rect` (viewport px), e.g. the open sea beside the title
+## menu. Not clamped to the map bounds, so the island can sit off-centre.
+## Returns the camera position used (Vector2.INF if the rects were unusable).
+func frame_in(r: Rect2, screen_rect: Rect2) -> Vector2:
+	var vs := get_viewport_rect().size
+	if r.size.x <= 0.0 or r.size.y <= 0.0 or screen_rect.size.x < 40.0 or screen_rect.size.y < 40.0:
+		return Vector2.INF
+	var z := clampf(minf(screen_rect.size.x / r.size.x, screen_rect.size.y / r.size.y) * 0.92, MIN_ZOOM, MAX_ZOOM)
+	_zoom_target = 0.0
+	_glide_to = Vector2.INF
+	var to := r.get_center() - (screen_rect.get_center() - vs * 0.5) / z
+	if not smooth or position.distance_to(to) > 4000.0:
+		zoom = Vector2(z, z)
+		position = to
+		return to
+	var tw := create_tween().set_parallel().set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_OUT)
+	tw.tween_property(self, "zoom", Vector2(z, z), 0.6)
+	tw.tween_property(self, "position", to, 0.6)
+	return to
+
+
 ## Eases the camera to a world position (and optionally a zoom level).
 func glide_to(world_pos: Vector2, z := 0.0) -> void:
 	if not smooth:

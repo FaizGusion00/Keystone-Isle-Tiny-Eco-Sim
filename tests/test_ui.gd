@@ -222,3 +222,22 @@ func test_history_is_master_detail_on_narrow_screens() -> void:
 	assert_true(main.hud._hist_list_pane.visible and main.hud._hist_detail_pane.visible, "both panes visible")
 	vp.size = old
 	_free(main)
+
+
+func test_title_menu_frames_island_and_restores_camera() -> void:
+	var main := _main()
+	main.camera.smooth = false
+	var pos: Vector2 = main.camera.position
+	var zoom: Vector2 = main.camera.zoom
+	main.open_menu()
+	await main.get_tree().process_frame
+	await main.get_tree().process_frame
+	var free: Rect2 = main.screens.menu_free_rect
+	assert_true(free.size.x > 100.0 and free.size.y > 100.0, "menu leaves room for the island")
+	var vs: Vector2 = main.camera.get_viewport_rect().size
+	var c: Vector2 = main._land_bounds().get_center()
+	var on_screen: Vector2 = (c - main.camera.position) * main.camera.zoom.x + vs * 0.5
+	assert_true(free.grow(4.0).has_point(on_screen), "island centred in the free space (%s in %s)" % [on_screen, free])
+	main.screens.close()
+	assert_true(main.camera.position.distance_to(pos) < 0.5 and main.camera.zoom.is_equal_approx(zoom), "closing the menu returns the camera")
+	_free(main)

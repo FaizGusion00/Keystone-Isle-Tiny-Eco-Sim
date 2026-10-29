@@ -7,6 +7,9 @@ const MAP_SIZE := 32
 
 @onready var world_view: WorldView = $WorldView
 @onready var camera: CameraController = $Camera
+var _menu_anchor := Vector2.INF  ## camera position framing the island beside the title menu
+var _menu_pan_t := 0.0
+var _menu_view := {}  ## camera pos/zoom saved while the title menu frames the island
 @onready var hud: Hud = $HUD
 @onready var clock: SimClock = $Clock
 var ambience: Ambience
@@ -292,6 +295,47 @@ func _on_screen_changed(screen_name: String) -> void:
 	hud.visible = not open
 	if open and screen_name == "menu":
 		select_tile(Vector2i(-1, -1))
+	if not open and not _menu_view.is_empty():
+		# back to play: return the camera to where the player left it
+		var v := _menu_view
+		_menu_view = {}
+		if camera.smooth:
+			var tw := camera.create_tween().set_parallel().set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_OUT)
+			tw.tween_property(camera, "zoom", v["zoom"], 0.45)
+			tw.tween_property(camera, "position", v["pos"], 0.45)
+		else:
+			camera.zoom = v["zoom"]
+			camera.position = v["pos"]
+
+
+## Called by the title menu once laid out: shows the whole island in the free space beside it.
+func frame_menu_view(free: Rect2) -> void:
+	if sim == null:
+		return
+	if _menu_view.is_empty():
+		_menu_view = {"pos": camera.position, "zoom": camera.zoom}
+	_menu_anchor = camera.frame_in(_land_bounds(), free)
+	_menu_pan_t = 0.0
+
+
+## Screen-space bounds of the island's land tiles (plus terrain height), for framing.
+func _land_bounds() -> Rect2:
+	var w := sim.world
+	var r := Rect2()
+	var any := false
+	for y in w.height:
+		for x in w.width:
+			if LandType.is_water(w.land_type[y * w.width + x]):
+				continue
+			var c := Iso.tile_to_local(x, y)
+			if not any:
+				r = Rect2(c, Vector2.ZERO)
+				any = true
+			else:
+				r = r.expand(c)
+	if not any:
+		return Iso.map_bounds(w.width, w.height)
+	return r.grow_individual(Iso.HALF_W, Iso.HALF_H + WorldView.MAX_H, Iso.HALF_W, Iso.HALF_H + 12.0)
 
 
 func set_simulation(s: Simulation) -> void:
@@ -308,6 +352,7 @@ func set_simulation(s: Simulation) -> void:
 	clock.sim = sim
 	world_view.set_world(sim.world, sim.events)
 	ambience.set_world(world_view)
+	_menu_view = {}
 	camera.set_bounds(Iso.map_bounds(sim.world.width, sim.world.height).grow_individual(0, WorldView.MAX_H, 0, 0))
 	hud.set_seed(sim.world.world_seed)
 	hud.set_day(sim.world.tick)
@@ -605,10 +650,13 @@ func _unhandled_input(event: InputEvent) -> void:
 
 func _process(delta: float) -> void:
 	if screens != null and screens.current == "menu" and not UiKit.reduce_motion and sim != null:
-		# slow cinematic drift over the island behind the title screen
+		# slow cinematic drift around the framed island behind the title screen (fades in after the framing tween)
 		_menu_pan += delta * 0.12
-		var c := camera.bounds.get_center()
-		camera.position = c + Vector2(cos(_menu_pan) * camera.bounds.size.x * 0.12, sin(_menu_pan * 0.7) * camera.bounds.size.y * 0.08)
+		_menu_pan_t = minf(_menu_pan_t + delta, 1.6)
+		if _menu_anchor != Vector2.INF and _menu_pan_t > 0.6:
+			var amp := smoothstep(0.6, 1.6, _menu_pan_t)
+			var drift := Vector2(sin(_menu_pan) * 22.0, sin(_menu_pan * 0.7) * 12.0) * amp / camera.zoom.x
+			camera.position = _menu_anchor + drift
 	if catch_up != null and not _suspended:
 		if catch_up.process_batch():
 			_finish_catch_up(true)

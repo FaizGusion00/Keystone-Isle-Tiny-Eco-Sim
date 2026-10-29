@@ -21,6 +21,7 @@ var _data := {}
 var _backdrop: ColorRect
 var _shade: TextureRect
 var _content: Control
+var menu_free_rect := Rect2()  ## viewport px left for the island beside the title menu
 var _post_fit: Callable  ## layout step that needs the content inside the themed tree
 # new-world form state
 var _nw := {"seed": 0, "size": 1, "preset": 0, "relaxed": false, "free_build": false}
@@ -291,6 +292,12 @@ func _menu(sz: Vector2) -> Control:
 			col.position = Vector2(64, (sz.y - col.size.y) * 0.5)
 		ver.reset_size()
 		ver.position = Vector2(sz.x - ver.size.x - 20, sz.y - ver.size.y - 14) if not portrait else Vector2(16, 14)
+		# the island floats in the open space beside / above the menu
+		var free := Rect2(Vector2(16, 44), Vector2(sz.x - 32, card.position.y - 60)) if card != null \
+			else Rect2(Vector2(col.position.x + col.size.x + 24, 24), Vector2(sz.x - col.position.x - col.size.x - 48, sz.y - 48))
+		menu_free_rect = Rect2(free.position * ui_scale, free.size * ui_scale)
+		if main.has_method("frame_menu_view"):
+			main.frame_menu_view(menu_free_rect)
 	return holder
 
 
