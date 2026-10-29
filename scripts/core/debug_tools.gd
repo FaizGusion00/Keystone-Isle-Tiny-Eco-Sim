@@ -131,4 +131,4 @@ static func _screenshot(main: Node, path: String, frames: int) -> void:
 	var img := main.get_viewport().get_texture().get_image()
 	var err := img.save_png(path)
 	print("screenshot saved: ", path, " err=", err)
-	main.get_tree().quit()
+	main.quit_game()

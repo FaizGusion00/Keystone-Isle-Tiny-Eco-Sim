@@ -28,6 +28,17 @@ func _enter_tree() -> void:
 func _exit_tree() -> void:
 	if current == self:
 		current = null
+	shutdown()
+
+
+## Stops and drops every stream so no playback objects outlive the audio server at quit.
+## Call a frame before quitting (the mixer releases playbacks on its next pass).
+func shutdown() -> void:
+	for p in _pool + [music, sea, rain]:
+		if p != null:
+			p.stop()
+			p.stream = null
+	_streams.clear()
 
 
 func _ready() -> void:

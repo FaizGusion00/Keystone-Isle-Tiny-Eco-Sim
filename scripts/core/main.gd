@@ -577,8 +577,12 @@ func restore_from_disk() -> bool:
 
 func _notification(what: int) -> void:
 	match what:
-		NOTIFICATION_APPLICATION_PAUSED, NOTIFICATION_APPLICATION_FOCUS_OUT, NOTIFICATION_WM_CLOSE_REQUEST:
+		NOTIFICATION_APPLICATION_PAUSED, NOTIFICATION_APPLICATION_FOCUS_OUT:
 			suspend()
+		NOTIFICATION_WM_CLOSE_REQUEST:
+			suspend()
+			if AudioDirector.current != null:
+				AudioDirector.current.shutdown()
 		NOTIFICATION_APPLICATION_RESUMED, NOTIFICATION_APPLICATION_FOCUS_IN:
 			resume()
 
@@ -646,6 +650,15 @@ func _unhandled_input(event: InputEvent) -> void:
 		cycle_overlay()
 	elif k == KEY_H:
 		hud.show_events(sim.events)
+
+
+## Clean exit: silence audio first so its playbacks are released before the engine shuts down.
+func quit_game() -> void:
+	if AudioDirector.current != null:
+		AudioDirector.current.shutdown()
+	await get_tree().process_frame
+	await get_tree().process_frame
+	get_tree().quit()
 
 
 func _process(delta: float) -> void:
