@@ -390,8 +390,7 @@ func _toast_new_events() -> void:
 	_seen_event_id = sim.events.next_id
 	if newest >= 0:
 		var bad := EventLog.is_bad(sim.events.type_of(newest))
-		var kind := EventLog.kind_of_type(sim.events.type_of(newest))
-		hud.toast(sim.events.describe(newest), 4.0, str(Hud.KIND_ICONS[kind]) if kind >= 0 and kind < Hud.KIND_ICONS.size() else "info", bad)
+		hud.toast(sim.events.describe(newest), 4.0, Hud.event_icon(sim.events.type_of(newest)), bad)
 		AudioDirector.sfx("warn" if bad else "notify", 1.0, -4.0)
 
 

@@ -329,7 +329,10 @@ func deco_key(i: int) -> int:
 	k |= river << 10                                               # 2 bits
 	k |= int(clampf(world.sediment[i] * 6.0, 0.0, 0.7) * 10.0) << 12  # 3 bits
 	k |= mini(3, int(world.reservoir[i] * 6.0)) << 15              # 2 bits
-	k |= (1 if world.tick - world.flood_tick[i] < 6 else 0) << 17
+	var flooded := world.tick - world.flood_tick[i] < 6 \
+		or (world.structure[i] != WorldState.Structure.NONE and world.structure[i] != WorldState.Structure.DAM \
+		and world.surface_water[i] >= Simulation.FLOOD_DEPTH * 0.6)
+	k |= (1 if flooded else 0) << 17
 	if _cottage_rank.size() > i and _cottage_rank[i] >= 0:
 		k |= (1 if _cottage_rank[i] < cottages_wanted() else 0) << 18
 	if t == LandType.GRASSLAND or t == LandType.LOWLAND:
@@ -442,11 +445,22 @@ func draw_tile(cv: CanvasItem, x: int, y: int) -> void:
 	if reservoir > 0:
 		var a := 0.35 + 0.18 * reservoir
 		cv.draw_colored_polygon(_inset(top, 0.82), Color(RIVER, a).lerp(Color(MUD, a), world.sediment[i] * 4.0))
-	if (deco >> 17) & 1:
-		cv.draw_colored_polygon(_inset(top, 0.96), Color(0.55, 0.66, 0.70, 0.55))
 	_draw_streams(cv, x, y, i, top, deco)
 	_draw_structure(cv, i, top)
+	if (deco >> 17) & 1:
+		_draw_floodwater(cv, i, top)
 	_draw_nature(cv, x, y, i, top, deco)
+
+
+## Standing floodwater: a murky sheet drawn over whatever is built here, with a few ripples.
+func _draw_floodwater(cv: CanvasItem, i: int, top: Vector2) -> void:
+	var muddy := Color(0.34, 0.66, 0.84, 0.86).lerp(Color(MUD, 0.86), clampf(world.sediment[i] * 3.0, 0.0, 0.6))
+	cv.draw_colored_polygon(_inset(top, 0.94), muddy)
+	var hi := Color(0.86, 0.93, 0.95, 0.55)
+	for k in 3:
+		var o := Vector2((hash_of(i, 11 + k) % 100 - 50) * 0.28, (hash_of(i, 21 + k) % 100 - 50) * 0.12)
+		var c := top + o
+		cv.draw_line(c - Vector2(7, 0), c + Vector2(7, 0), hi, 1.5, true)
 
 
 func _vary(col: Color, vx: int, vy: int) -> Color:

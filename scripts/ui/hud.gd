@@ -33,6 +33,26 @@ const TOOL_TIPS := [
 ]
 const SEASON_ICONS := ["sprout", "cloud-rain", "sun", "thermometer"]
 const KIND_ICONS := ["hand", "cloud-sun", "mountain", "fish", "users", "flame"]
+## Per-event-type icons; anything missing falls back to its kind's icon.
+const TYPE_ICONS := {
+	EventLog.Type.TREES_CLEARED: "axe", EventLog.Type.TREES_PLANTED: "sprout", EventLog.Type.FARM_BUILT: "wheat",
+	EventLog.Type.HEAVY_RAIN: "cloud-rain", EventLog.Type.DROUGHT: "sun", EventLog.Type.DROUGHT_ENDED: "cloud-drizzle",
+	EventLog.Type.EROSION: "mountain", EventLog.Type.MUDDY_WATER: "droplets", EventLog.Type.WATER_CLEARED: "droplet",
+	EventLog.Type.FISH_DECLINE: "fish", EventLog.Type.HERBIVORE_DECLINE: "rabbit", EventLog.Type.CROP_FAILURE: "wheat",
+	EventLog.Type.HARVEST_LOST: "wheat", EventLog.Type.FOOD_SHORTAGE: "beef", EventLog.Type.WATER_SHORTAGE: "droplet",
+	EventLog.Type.LAND_CLEARED: "shovel", EventLog.Type.HOUSE_BUILT: "house", EventLog.Type.DAM_BUILT: "brick-wall",
+	EventLog.Type.LAND_RESTORED: "leaf", EventLog.Type.STRUCTURE_REMOVED: "trash-2",
+	EventLog.Type.DRY_SEASON: "sun", EventLog.Type.WET_SEASON: "cloud-rain",
+	EventLog.Type.WILDFIRE: "flame", EventLog.Type.FIRE_OUT: "cloud-drizzle", EventLog.Type.FLOOD: "waves",
+	EventLog.Type.HOUSING_FULL: "home",
+}
+
+
+static func event_icon(t: int) -> String:
+	if TYPE_ICONS.has(t):
+		return str(TYPE_ICONS[t])
+	var kind := EventLog.kind_of_type(t)
+	return str(KIND_ICONS[kind]) if kind >= 0 and kind < KIND_ICONS.size() else "info"
 const KIND_COLORS := [Color("2f7d6d"), Color("4a8fb8"), Color("9a7650"), Color("5f9e45"), Color("8a5fb0"), Color("d0603f")]
 
 var root: Control
@@ -225,10 +245,12 @@ func _layout(sz: Vector2) -> void:
 	var chips_h := _chips_flow.get_combined_minimum_size().y
 	var top_bottom := maxf(chips_y + chips_h, t + maxf(_day_card.size.y, _speed_card.size.y)) + 10.0
 	# --- objectives card (top-left below)
-	var obj_w := minf(340.0, w) if not portrait else w
+	var obj_w := minf(372.0, w) if not portrait else w
 	_obj_card.custom_minimum_size = Vector2(obj_w, 0)
 	_obj_card.reset_size()
 	_obj_card.position = Vector2(l, top_bottom)
+	if _sim != null and _sim.scenario != null:
+		_obj_card.visible = not events_panel.visible
 	# --- inspector
 	var insp_w := w if portrait else minf(360.0, w * 0.4)
 	_insp_event.custom_minimum_size.x = insp_w - 70.0  # wrap width known up front (no tall first pass)
@@ -263,6 +285,8 @@ func _layout(sz: Vector2) -> void:
 	if not portrait:
 		if events_panel.visible:
 			tl = hx + hw + 12.0
+		elif _obj_card.visible:
+			tl = maxf(tl, _obj_card.position.x + _obj_card.size.x + 12.0)
 		if _inspector.visible:
 			tr = _inspector.position.x - 12.0
 	var tw := minf(520.0, maxf(200.0, tr - tl))
@@ -270,7 +294,10 @@ func _layout(sz: Vector2) -> void:
 	_toasts.size.x = tw
 	# a phone-portrait history drawer already lists every event, so toasts stay out of its way
 	_toasts.visible = not (portrait and events_panel.visible)
-	_toasts.position = Vector2(tl + (tr - tl - tw) * 0.5, top_bottom + 4.0)
+	var toast_y := top_bottom + 4.0
+	if portrait and _obj_card.visible:
+		toast_y = _obj_card.position.y + _obj_card.size.y + 8.0  # full-width goals card owns the top
+	_toasts.position = Vector2(tl + (tr - tl - tw) * 0.5, toast_y)
 	# --- popup + scrim
 	_scrim.position = Vector2.ZERO
 	_scrim.size = sz
@@ -455,7 +482,7 @@ func _build_objectives() -> void:
 	var head := UiKit.hbox(8)
 	col.add_child(head)
 	head.add_child(UiKit.icon("flag-triangle-right", 22, UiKit.AMBER))
-	_obj_title = UiKit.label("Goals", 20, "Heading")
+	_obj_title = UiKit.label("Goals", 19, "Heading")
 	_obj_title.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	_obj_title.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
 	head.add_child(_obj_title)
@@ -491,7 +518,7 @@ func update_objectives(sim: Simulation) -> void:
 		return
 	objective_label.text = sc.objective_text(sim.world)
 	var objs := sc.objectives()
-	_obj_card.visible = true
+	_obj_card.visible = not events_panel.visible  # the history drawer covers the same corner
 	_obj_title.text = sc.title()
 	if sc.is_sandbox():
 		objs = []
@@ -665,6 +692,10 @@ func tile_rows(sim: Simulation, t: Vector2i) -> Array:
 	var ws := sim.world
 	var i := ws.index(t.x, t.y)
 	var rows := []
+	var sw := ws.surface_water[i]
+	if ws.structure[i] != WorldState.Structure.NONE and ws.structure[i] != WorldState.Structure.DAM \
+			and (sw >= 0.2 or ws.tick - ws.flood_tick[i] < 6):
+		rows.append(["waves", "Flood water", "%d cm" % roundi(sw * 100.0), clampf(sw / Simulation.FLOOD_DEPTH, 0.0, 1.0), UiKit.CORAL])
 	match ws.structure[i]:
 		WorldState.Structure.SETTLEMENT:
 			var cap := ws.housing_capacity()
@@ -695,7 +726,7 @@ func tile_rows(sim: Simulation, t: Vector2i) -> Array:
 	rows.append(["leaf", "Plant cover", "%d%%" % roundi(ws.vegetation_cover[i] * 100.0), ws.vegetation_cover[i], UiKit.LEAF])
 	rows.append(["mountain", "Topsoil", "%d%%" % roundi(ws.soil_depth[i] * 100.0), ws.soil_depth[i], Color("9a7650")])
 	rows.append(["gauge", "Elevation", "%d m" % roundi(ws.elevation[i] * 120.0), ws.elevation[i], UiKit.INK_FAINT])
-	if ws.surface_water[i] > 0.01:
+	if sw > 0.01 and str(rows[0][1]) != "Flood water":
 		rows.append(["droplets", "Runoff", "%.0f mm" % (ws.surface_water[i] * 1000.0), -1.0])
 	return rows
 
@@ -999,7 +1030,7 @@ func _event_row(log_: EventLog, id: int) -> Button:
 	var col: Color = KIND_COLORS[kind]
 	if EventLog.is_bad(t):
 		col = UiKit.CORAL
-	row.add_child(UiKit.icon_badge(KIND_ICONS[kind], Color(col, 0.16), col, 34))
+	row.add_child(UiKit.icon_badge(event_icon(t), Color(col, 0.16), col, 34))
 	var day := UiKit.label("Day %d" % log_.tick_of(id), 0, "Badge")
 	day.custom_minimum_size.x = 56
 	row.add_child(day)
@@ -1083,7 +1114,7 @@ func show_explanation(id: int) -> void:
 		var ev_type := _type_from_text(text)
 		var kind := EventLog.kind_of_type(ev_type)
 		var colr: Color = UiKit.CORAL if EventLog.is_bad(ev_type) else KIND_COLORS[kind]
-		crow.add_child(UiKit.icon_badge(KIND_ICONS[kind], Color(colr, 0.16), colr, 32))
+		crow.add_child(UiKit.icon_badge(event_icon(ev_type), Color(colr, 0.16), colr, 32))
 		var tl := UiKit.wrap_label(text, "", maxf(120.0, events_panel.size.x - indent - 110.0))
 		tl.add_theme_font_size_override("font_size", 16 if k > 0 else 17)
 		if k == 0:

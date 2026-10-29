@@ -125,3 +125,10 @@ func test_camera_zoom_eases_to_target() -> void:
 	assert_near(cam.zoom.x, 1.0, 0.01, "reduce motion: instant")
 	cam.get_parent().remove_child(cam)
 	cam.free()
+
+
+func test_every_event_type_has_an_icon() -> void:
+	assert_eq(Hud.event_icon(EventLog.Type.FLOOD), "waves")
+	for t in EventLog.TYPE_NAMES:
+		var icon := Hud.event_icon(t)
+		assert_true(ResourceLoader.exists("res://assets/icons/%s.svg" % icon), "icon %s for %s" % [icon, EventLog.TYPE_NAMES[t]])

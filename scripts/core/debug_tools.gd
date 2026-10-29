@@ -4,7 +4,8 @@ extends RefCounted
 ##   godot -- --select=12,14 --screenshot=/tmp/shot.png [--seed=N] [--zoom=1.5]
 ##            [--clear-rect=x0,y0,x1,y1] [--ticks=N] [--speed=0|1|2]
 ##            [--tutorial] [--restore] [--away=SECONDS]
-##            [--farms=N] [--overlay=0..4] [--history[=EVENT_TYPE_NAME]]
+##            [--farms=N] [--farms-at=x,y;x,y] [--dams=N] [--until=EVENT_TYPE_NAME] [--no-results] [--overlay=0..4] [--history[=EVENT_TYPE_NAME]]
+##            [--focus=village|dam|event|x,y] [--select=village|dam|event|x,y]  (dam = last --dams tile, event = the --until hit)
 
 
 static func handle_cmdline(main: Node) -> void:
@@ -33,8 +34,49 @@ static func handle_cmdline(main: Node) -> void:
 				for dx in range(-r, r + 1):
 					if left > 0 and main.sim.apply_action(Simulation.Action.BUILD_FARM, c.x + dx, c.y + dy):
 						left -= 1
-	if args.has("ticks"):
-		main.sim.run(int(args["ticks"]))
+	if args.has("farms-at"):
+		# --farms-at=x,y;x,y : build farms on exact tiles (e.g. low river banks, to stage a flood)
+		for pair in String(args["farms-at"]).split(";"):
+			var fp2 := pair.split(",")
+			if fp2.size() == 2:
+				main.sim.apply_action(Simulation.Action.BUILD_FARM, int(fp2[0]), int(fp2[1]))
+	var marks := {}  # named tiles for --focus / --select: "dam", "event"
+	if args.has("dams"):
+		# --dams=N : build up to N dams on the river tiles closest to the village
+		var vc: Vector2i = main.sim.world.coords(main.sim.world.settlement_index)
+		var spots: Array = []
+		for y in main.sim.world.height:
+			for x in main.sim.world.width:
+				if main.sim.tile_rule(Simulation.Action.BUILD_DAM, x, y) == "":
+					spots.append(Vector2i(x, y))
+		spots.sort_custom(func(a: Vector2i, b: Vector2i) -> bool: return a.distance_squared_to(vc) < b.distance_squared_to(vc))
+		var n := int(args["dams"])
+		main.sim.world.wood += 12.0 * n  # screenshot helper: pay for the dams
+		main.sim.world.labor += 8.0 * n
+		for sp in spots:
+			if n <= 0:
+				break
+			if main.sim.apply_action(Simulation.Action.BUILD_DAM, sp.x, sp.y):
+				n -= 1
+				marks["dam"] = sp
+	if args.has("ticks") or args.has("until"):
+		main.sim.run(int(args.get("ticks", "0")))
+		if args.has("until"):
+			# --until=EVENT_TYPE : keep running (max 2000 ticks) until that event is recorded
+			var want: int = EventLog.Type.get(String(args["until"]), -1)
+			var start: int = main.sim.events.recent(1)[0] if main.sim.events.recent(1).size() > 0 else -1
+			for i in 2000:
+				main.sim.step()
+				var hit := false
+				for id in main.sim.events.recent(8):
+					if id > start and main.sim.events.type_of(id) == want:
+						hit = true
+						marks["event"] = main.sim.events.pos_of(id)
+				if hit:
+					print("until: hit ", args["until"], " at tick ", main.sim.world.tick, " tile ", marks["event"])
+					break
+		if args.has("no-results") and main.sim.scenario != null:
+			main._scenario_status = main.sim.scenario.status  # keep the results sheet closed for gameplay shots
 		main.world_view.refresh()
 		main.hud.set_day(main.sim.world.tick)
 		main.hud.set_status(main.sim.world)
@@ -64,13 +106,17 @@ static func handle_cmdline(main: Node) -> void:
 		main.hud.show_events(main.sim.events, sel)
 	if args.has("focus"):
 		var fc: Vector2i = main.sim.world.coords(main.sim.world.settlement_index)
-		if String(args["focus"]) != "village":
+		if marks.has(String(args["focus"])):
+			fc = marks[String(args["focus"])]
+		elif String(args["focus"]).contains(","):
 			var fp: PackedStringArray = String(args["focus"]).split(",")
 			fc = Vector2i(int(fp[0]), int(fp[1]))
 		main.camera.position = main.world_view.position + main.world_view.top_center(fc.x, fc.y)
 	if args.has("select"):
 		var st: Vector2i = main.sim.world.coords(main.sim.world.settlement_index)
-		if String(args["select"]) != "village":
+		if marks.has(String(args["select"])):
+			st = marks[String(args["select"])]
+		elif String(args["select"]).contains(","):
 			var p: PackedStringArray = String(args["select"]).split(",")
 			st = Vector2i(int(p[0]), int(p[1]))
 		main.select_tile(st)
