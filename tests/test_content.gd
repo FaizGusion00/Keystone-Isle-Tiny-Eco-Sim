@@ -281,13 +281,14 @@ func test_v2_save_migrates_and_stays_deterministic() -> void:
 	assert_false(sim.world.rare_events)
 	assert_eq(sim.world.rare_event, -1)
 	assert_true(str(sim.save_info.get("id", "")).length() == 32, "v2 save gets a lineage id")
-	# the fixture is dry_season after 60 ticks, written by the v2 build (commit 1ca7c0f)
-	var fresh := ScenarioCatalog.create_sim(ScenarioCatalog.get_def("dry_season"))
-	fresh.run(60)
-	assert_eq(sim.world.checksum(), fresh.world.checksum(), "migrated state equals a v3 replay")
+	# The fixture is dry_season after 60 ticks, written by the v2 build (commit 1ca7c0f). A save keeps
+	# its own terrain, so it never changes when the island generator improves: it must replay
+	# deterministically from its own state, and a save/reload must not perturb it.
+	assert_eq(sim.world.tick, 50 + 60)
+	var again := SaveSystem.from_dict(SaveSystem.to_dict(sim))
 	sim.run(40)
-	fresh.run(40)
-	assert_eq(sim.world.checksum(), fresh.world.checksum())
+	again.run(40)
+	assert_eq(sim.world.checksum(), again.world.checksum(), "migrated save replays identically after a roundtrip")
 	var newer := SaveSystem.to_dict(sim)
 	newer["version"] = SaveSystem.VERSION + 1
 	assert_eq(SaveSystem.from_dict(newer), null, "future version refused")

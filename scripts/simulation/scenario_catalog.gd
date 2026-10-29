@@ -101,7 +101,7 @@ const CHALLENGES := [
 		"intro": "Wildfires start four times as easily. Grow to 14 villagers and last 240 days - if island health drops below 60, you lose.",
 		"win_text": "The island survived fire season.",
 		"seed": 1312, "size": 32, "preset": 2,
-		"setup": {"climate_fire": 4.0, "climate_rain": 0.8},
+		"setup": {"climate_fire": 4.0, "climate_rain": 0.7},
 		"objectives": [{"kind": "survive", "target": 240}, {"kind": "villagers", "target": 14}],
 		"deadline": 0, "fail_villagers": 5, "fail_keystone": 60,
 		"stars": [{"kind": "keystone", "target": 80}, {"kind": "no_fire_loss"}],

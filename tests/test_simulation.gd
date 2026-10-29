@@ -82,6 +82,10 @@ func test_two_buffer_flow_is_order_independent() -> void:
 	a.run(5)
 	var b := Simulation.create(9, 32)
 	b.run(5)
+	for i in a.world.tile_count():  # make sure there is water moving this step
+		if a.world.land_type[i] > LandType.BEACH:
+			a.world.surface_water[i] += 0.05
+			b.world.surface_water[i] += 0.05
 	a._water_flow_and_erosion()
 	b._water_flow_and_erosion()
 	assert_eq(a.world.surface_water, b.world.surface_water)

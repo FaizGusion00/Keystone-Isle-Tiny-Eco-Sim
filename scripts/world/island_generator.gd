@@ -74,8 +74,160 @@ static func generate(world_seed: int, w: int = 32, h: int = 32, preset: int = Pr
 			ws.soil_moisture[i] = 1.0 if LandType.is_water(t) else clampf(0.18 + 0.45 * m, 0.0, 1.0)
 			ws.vegetation_cover[i] = _initial_vegetation(t, m)
 			ws.soil_depth[i] = _initial_soil(t)
+	_shape_drainage(ws)
 	_place_settlement(ws)
 	return ws
+
+
+const CARVE_ITERS := 8
+const CARVE_K := 0.012      ## valley incision per iteration per sqrt(catchment)
+const VALLEY_PASSES := 2
+const VALLEY_FALL := 0.6
+const CARVE_MAX := 0.12     ## a valley never cuts deeper than this below the original ground
+const FILL_EPS := 0.002     ## minimum fall per tile through a filled hollow (randomised per tile)
+
+
+## Turns raw noise relief into a believable drainage network: hollows are filled so every land
+## tile drains to the sea (priority-flood), then valleys are incised in proportion to sqrt(catchment)
+## and re-filled, a few times over. Neighbouring runs get captured by the deeper valley, so the
+## island ends up with one or two main rivers fed by tributaries instead of dozens of short parallel
+## rills. Land types (coast, biomes) still come from the original relief, so the island's outline is
+## unchanged; only the heights move. Deterministic: a per-tile hash, no RNG draws.
+static func _shape_drainage(ws: WorldState) -> void:
+	var e := ws.elevation
+	var orig := e.duplicate()
+	var w := ws.width
+	var h := ws.height
+	var salt := ws.world_seed & 0xffff
+	_fill_hollows(e, w, h, salt)
+	for it in CARVE_ITERS:
+		var area := catchment(e, w, h)
+		var cut := PackedFloat32Array()
+		cut.resize(e.size())
+		for i in e.size():
+			cut[i] = CARVE_K * (sqrt(float(area[i])) - 1.0)
+		# Widen each cut into a soft valley so neighbouring slopes lean into the channel (and
+		# their runoff joins it) without leaving steep walls that would shed every drop of rain.
+		for _p in VALLEY_PASSES:
+			var wide := cut.duplicate()
+			for y in h:
+				for x in w:
+					var i := y * w + x
+					var m := cut[i]
+					if x > 0: m = maxf(m, cut[i - 1] * VALLEY_FALL)
+					if x < w - 1: m = maxf(m, cut[i + 1] * VALLEY_FALL)
+					if y > 0: m = maxf(m, cut[i - w] * VALLEY_FALL)
+					if y < h - 1: m = maxf(m, cut[i + w] * VALLEY_FALL)
+					wide[i] = m
+			cut = wide
+		for i in e.size():
+			if orig[i] < BEACH_MAX:
+				continue
+			e[i] = maxf(e[i] - cut[i], maxf(BEACH_MAX + 0.002, orig[i] - CARVE_MAX))
+		_fill_hollows(e, w, h, salt)
+	ws.elevation = e
+
+
+## Lowest 4-neighbour each tile drains to (-1 = none lower), as used by the simulation.
+static func drain_targets(e: PackedFloat32Array, w: int, h: int) -> PackedInt32Array:
+	var d := PackedInt32Array()
+	d.resize(w * h)
+	for y in h:
+		for x in w:
+			var i := y * w + x
+			var best := -1
+			var be := e[i]
+			if x > 0 and e[i - 1] < be: best = i - 1; be = e[i - 1]
+			if x < w - 1 and e[i + 1] < be: best = i + 1; be = e[i + 1]
+			if y > 0 and e[i - w] < be: best = i - w; be = e[i - w]
+			if y < h - 1 and e[i + w] < be: best = i + w; be = e[i + w]
+			d[i] = best
+	return d
+
+
+## Number of land tiles draining through each tile (1 = only itself).
+static func catchment(e: PackedFloat32Array, w: int, h: int) -> PackedInt32Array:
+	var d := drain_targets(e, w, h)
+	var n := e.size()
+	var a := PackedInt32Array()
+	a.resize(n)
+	a.fill(1)
+	var order: Array = range(n)
+	order.sort_custom(func(p: int, q: int) -> bool: return e[p] > e[q] or (e[p] == e[q] and p < q))
+	for i in order:
+		if d[i] >= 0 and e[i] >= SHALLOW_MAX:
+			a[d[i]] += a[i]
+	return a
+
+
+## Priority-flood from the sea: raises every land hollow to just above its spill point, with a
+## small randomised fall per tile so filled flats still drain along a natural-looking path.
+static func _fill_hollows(e: PackedFloat32Array, w: int, h: int, salt: int) -> void:
+	var n := e.size()
+	var done := PackedByteArray()
+	done.resize(n)
+	var heap: Array = []
+	for i in n:
+		if e[i] < SHALLOW_MAX:
+			done[i] = 1
+			_heap_push(heap, e[i], i)
+	while not heap.is_empty():
+		var c: int = _heap_pop(heap)[1]
+		var x := c % w
+		@warning_ignore("integer_division")
+		var y := c / w
+		for k in 4:
+			var xx := x + (-1 if k == 0 else (1 if k == 1 else 0))
+			var yy := y + (-1 if k == 2 else (1 if k == 3 else 0))
+			if xx < 0 or yy < 0 or xx >= w or yy >= h:
+				continue
+			var j := yy * w + xx
+			if done[j]:
+				continue
+			done[j] = 1
+			var fall := FILL_EPS * (0.3 + 1.4 * float(((j + salt * 7919) * 2654435761) % 1000) / 1000.0)
+			if e[j] < e[c] + fall:
+				e[j] = e[c] + fall
+			_heap_push(heap, e[j], j)
+
+
+static func _heap_less(a: Array, b: Array) -> bool:
+	return a[0] < b[0] or (a[0] == b[0] and a[1] < b[1])
+
+
+static func _heap_push(hp: Array, v: float, i: int) -> void:
+	hp.append([v, i])
+	var k := hp.size() - 1
+	while k > 0:
+		@warning_ignore("integer_division")
+		var p := (k - 1) / 2
+		if not _heap_less(hp[k], hp[p]):
+			break
+		var t: Array = hp[k]
+		hp[k] = hp[p]
+		hp[p] = t
+		k = p
+
+
+static func _heap_pop(hp: Array) -> Array:
+	var r: Array = hp[0]
+	var last: Array = hp.pop_back()
+	if hp.is_empty():
+		return r
+	hp[0] = last
+	var k := 0
+	while true:
+		var l := 2 * k + 1
+		var m := k
+		if l < hp.size() and _heap_less(hp[l], hp[m]): m = l
+		if l + 1 < hp.size() and _heap_less(hp[l + 1], hp[m]): m = l + 1
+		if m == k:
+			break
+		var t: Array = hp[k]
+		hp[k] = hp[m]
+		hp[m] = t
+		k = m
+	return r
 
 
 const START_VILLAGERS := 10

@@ -3,6 +3,17 @@
 1 tick = 1 in-game day. Systems run in this fixed order every tick (`Simulation.step()`).
 All constants live at the top of `scripts/simulation/simulation.gd`.
 
+## 0. Terrain & drainage (`IslandGenerator._shape_drainage`)
+- Raw noise elevation has many small pits, so runoff used to split into dozens of short parallel
+  lines. After land types are assigned, hollows are filled (priority flood, a tiny randomised fall
+  per tile so flats still drain in natural, non-straight paths), then valleys are incised 8 times by
+  `0.012·(√catchment − 1)`, widened into soft valleys (2 passes, ×0.6 per tile) and capped at 0.12
+  below the original ground, re-filling after each pass. Result: ~5–7 stream heads merging into one
+  or two rivers per 32×32 island. Land types (coast, biomes) are unchanged; saves store elevation, so
+  existing saves keep their terrain.
+- The map draws a stream at catchment ≥ 12, a river (wider, darker channel) at ≥ 40; rain shows faint
+  rills (catchment ≥ 8) only while it rains and only where they feed a stream within 5 tiles.
+
 ## 1. Rainfall (`_rainfall`)
 - Season: `s = sin(tick · 2π / 120)` (120-day year).
 - Rain chance `0.38 + 0.22·s`; amount `U(0.010, 0.050) · (1 + 0.5·max(s,0))` (seeded RNG, always 2 draws/tick).
@@ -100,7 +111,7 @@ Trees cleared*. Scenario state is part of the save and the checksum.
 - Housing cap = `12 + 4 × houses`. Houses go within 2 tiles of the village or next to another house.
 
 ## 9. Dams
-- Only on a stream (`upstream_area ≥ 6`). A dam stores up to 2.0 water, releases 0.03/day once it holds some,
+- Only on a stream (`upstream_area ≥ 12`, `DAM_MIN_AREA`; exactly the channels the map draws). A dam stores up to 2.0 water, releases 0.03/day once it holds some,
   loses 0.004/day to evaporation, and holds neighbouring soil moisture at ≥ 0.30 (irrigation).
 - A dam on a river (`upstream_area ≥ 20`) blocks fish runs: fish capacity −12 % per river dam. Smaller streams
   let fish pass. The inspector says which ("River dam: blocks fish" / "Small stream: fish pass").

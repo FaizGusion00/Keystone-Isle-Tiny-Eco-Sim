@@ -64,6 +64,7 @@ var banner_color := Color("2f7d6d")  ## cosmetic flag over the settlement (Journ
 var tile_colors := PackedColorArray()
 var heights := PackedFloat32Array()
 var down := PackedInt32Array()
+var catch_area := PackedInt32Array() ## land tiles draining through each tile (static)
 var _keys := PackedInt64Array()
 var _deco := PackedInt32Array()
 var _dirty := PackedByteArray()
@@ -209,6 +210,7 @@ func _compute_static() -> void:
 				be = world.elevation[ny * w + nx]
 				best = ny * w + nx
 		down[i] = best
+	catch_area = IslandGenerator.catchment(world.elevation, w, world.height)
 	# village sprawl: free land around the settlement fills with cottages as people arrive
 	_cottage_rank.resize(n)
 	_cottage_rank.fill(-1)
@@ -434,8 +436,10 @@ func deco_key(i: int) -> int:
 	k |= (1 if world.fire[i] != 0 else 0) << 8
 	k |= (1 if is_burnt(i) else 0) << 9
 	var fl := world.flow[i]
-	var river := 0 if fl < 0.07 else (1 if fl < 0.15 else (2 if fl < 0.3 else 3))
+	var river := stream_class(i)
 	k |= river << 10                                               # 2 bits
+	if river > 0:
+		k |= (0 if fl < 0.15 else (1 if fl < 0.3 else (2 if fl < 0.6 else 3))) << 26  # 2 bits: swell
 	k |= int(clampf(world.sediment[i] * 6.0, 0.0, 0.7) * 10.0) << 12  # 3 bits
 	k |= mini(3, int(world.reservoir[i] * 6.0)) << 15              # 2 bits
 	var flooded := world.tick - world.flood_tick[i] < 6 \
@@ -451,11 +455,39 @@ func deco_key(i: int) -> int:
 	var w := world.width
 	var bit := 21
 	for j in [i - 1, i + 1, i - w, i + w]:
-		if j >= 0 and j < world.tile_count() and down[j] == i and world.flow[j] >= 0.07:
+		if j >= 0 and j < world.tile_count() and down[j] == i and stream_class(j) > 0:
 			k |= 1 << bit
 		bit += 1
 	k |= (1 if overlay != Overlay.NONE else 0) << 25
 	return k
+
+
+const RILL_AREA := 8       ## runoff shows as a faint rill only while it rains, and only where
+const RILL_REACH := 5      ## it feeds a stream within this many tiles (a tributary tip, not a stripe)
+const STREAM_AREA := Simulation.DAM_MIN_AREA  ## a permanent stream (exactly where a dam may go)
+const RIVER_AREA := 40     ## a river: wider, with a darker channel
+
+
+## 0 none, 1 rain rill (only while it rains), 2 stream, 3 river. Channels follow the island's
+## drainage network (catchment), not every tile's momentary runoff, so the island reads as one
+## or two rivers fed by tributaries instead of a sheet of parallel stripes.
+func stream_class(i: int) -> int:
+	if catch_area.size() != world.tile_count() or LandType.is_water(world.land_type[i]) or down[i] < 0:
+		return 0
+	var a := catch_area[i]
+	if a >= RIVER_AREA:
+		return 3
+	if a >= STREAM_AREA:
+		return 2
+	if a >= RILL_AREA and world.rain_today > 0.0 and world.flow[i] >= 0.07:
+		var j := down[i]
+		for _s in RILL_REACH:
+			if j < 0 or LandType.is_water(world.land_type[j]):
+				return 0
+			if catch_area[j] >= STREAM_AREA:
+				return 1
+			j = down[j]
+	return 0
 
 
 func cottages_wanted() -> int:
@@ -635,11 +667,11 @@ func _stream_color(i: int) -> Color:
 ## as one continuous channel rather than straight dashes along the tile seams. Edge points sit
 ## on the sloped surface, so channels follow the ground.
 func _draw_streams(cv: CanvasItem, x: int, y: int, i: int, top: Vector2, deco: int) -> void:
-	var river := (deco >> 10) & 3
+	var cls := (deco >> 10) & 3
+	var swell := (deco >> 26) & 3
 	var w := world.width
 	var col := _stream_color(i)
-	var width := 1.4 + river * 1.6
-	var has_out := river > 0 and down[i] >= 0
+	var has_out := cls > 0 and down[i] >= 0
 	var out_pt := top
 	var dj := Vector2i.ZERO
 	if has_out:
@@ -651,35 +683,54 @@ func _draw_streams(cv: CanvasItem, x: int, y: int, i: int, top: Vector2, deco: i
 	for k in 4:
 		if (deco >> (21 + k)) & 1:
 			var o: Vector2i = nb[k]
-			var fl := world.flow[(y + o.y) * w + x + o.x]
+			var j := (y + o.y) * w + x + o.x
 			ins.append(_edge_mid(x, y, o))
-			in_w.append(3.0 if fl < 0.15 else (4.6 if fl < 0.3 else 6.2))
+			in_w.append(_channel_width(j, stream_class(j)))
 	if not has_out and ins.is_empty():
 		return
-	# a gentle per-tile meander keeps long straight runs from looking ruled
+	var width := _channel_width(i, cls) + swell * 0.6
+	# a gentle per-tile meander (edge crossings are shifted too, shared with the neighbour)
 	var bend := top + Vector2(float(hash_of(i, 31) % 13) - 6.0, float(hash_of(i, 37) % 7) - 3.0)
 	var paths: Array[PackedVector2Array] = []
 	var widths: Array[float] = []
 	if ins.is_empty():
-		paths.append(_bezier(top, bend, out_pt))
-		widths.append(width)
+		# a source: the channel starts a little inside the tile, tapering in
+		paths.append(_bezier(top.lerp(bend, 0.5), bend, out_pt))
+		widths.append(width * 0.7)
 	for k in ins.size():
 		paths.append(_bezier(ins[k], bend, out_pt if has_out else top))
-		widths.append(maxf(in_w[k], width) if has_out else in_w[k])
-	var bank := Color(col.darkened(0.4), 0.28)
-	if river <= 1 and ins.size() <= 1:
-		col = Color(col, 0.8) # a seasonal rivulet: lighter than a real stream
+		widths.append(minf(in_w[k], width) if has_out else in_w[k])
+	if cls == 1:
+		# rain runoff: a faint wet line, no bank, no glint
+		for k in paths.size():
+			cv.draw_polyline(paths[k], Color(col.lightened(0.1), 0.30), widths[k], true)
+		return
+	var bank := Color(col.darkened(0.45), 0.30)
 	for k in paths.size():
-		cv.draw_polyline(paths[k], bank, widths[k] + 3.0, true)
+		cv.draw_polyline(paths[k], bank, widths[k] + (3.5 if cls == 3 else 2.5), true)
 	for k in paths.size():
 		cv.draw_polyline(paths[k], col, widths[k], true)
+	if cls == 3:
+		var deep := col.darkened(0.18)
+		for k in paths.size():
+			cv.draw_polyline(paths[k], deep, widths[k] * 0.45, true)
 	for k in paths.size():
-		cv.draw_polyline(paths[k], Color(1, 1, 1, 0.22), maxf(widths[k] * 0.3, 1.0), true)
+		cv.draw_polyline(paths[k], Color(1, 1, 1, 0.20), maxf(widths[k] * 0.22, 0.8), true)
 	# a stream leaving over the shore bank falls into the sea with a little splash
 	if has_out and (dj == Vector2i(1, 0) or dj == Vector2i(0, 1)) and LandType.is_water(world.land_type[down[i]]):
 		var foot := out_pt + Vector2(0, BASE_H)
 		cv.draw_line(out_pt, foot, col.lightened(0.15), width + 1.0)
 		cv.draw_circle(foot, width * 0.7, Color(1, 1, 1, 0.45))
+
+
+## Channel width grows with the square root of its catchment, so tributaries visibly merge into
+## a wider river downstream.
+func _channel_width(i: int, cls: int) -> float:
+	if cls <= 0:
+		return 0.0
+	if cls == 1:
+		return 1.6
+	return clampf(1.6 + 0.62 * sqrt(float(catch_area[i])), 3.0, 9.0)
 
 
 ## Midpoint of the edge of tile (x, y) facing neighbour offset o, on the surface.
@@ -694,7 +745,12 @@ func _edge_mid(x: int, y: int, o: Vector2i) -> Vector2:
 		a = corner_point(x, y + 1); b = corner_point(x + 1, y + 1)
 	else:
 		a = corner_point(x, y); b = corner_point(x + 1, y)
-	return (a + b) * 0.5
+	# shift the crossing along the edge by a hash of the edge itself, so both tiles agree
+	var ex := x + (1 if o.x > 0 else 0)
+	var ey := y + (1 if o.y > 0 else 0)
+	var key := (ey * (world.width + 1) + ex) * 2 + (1 if o.x != 0 else 0)
+	var t := 0.5 + (float(hash_of(key, 41) % 1000) / 1000.0 - 0.5) * 0.44
+	return a.lerp(b, t)
 
 
 static func _bezier(a: Vector2, c: Vector2, b: Vector2) -> PackedVector2Array:
