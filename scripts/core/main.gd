@@ -425,9 +425,13 @@ func _on_tile_tapped(screen_pos: Vector2) -> void:
 			AudioDirector.sfx("ui_error")
 			UiKit.haptic(40)
 		else:
+			var labor0 := sim.world.labor
+			var wood0 := sim.world.wood
 			sim.apply_action(action, t.x, t.y)
 			world_view.refresh()
 			ambience.pop(t)
+			ambience.float_text(t, _delta_text(sim.world.labor - labor0, sim.world.wood - wood0),
+				Color(1.0, 0.93, 0.80))
 			AudioDirector.sfx(ACTION_SFX.get(action, "build"), randf_range(0.94, 1.06))
 			UiKit.haptic(18)
 			hud.set_status(sim.world)
@@ -436,6 +440,16 @@ func _on_tile_tapped(screen_pos: Vector2) -> void:
 	else:
 		AudioDirector.sfx("ui_click", 1.1, -6.0)
 	select_tile(t)
+
+
+## "−1 labor  −2 wood" (or "+3 wood" when clearing forest) for the floater over a placed tile.
+static func _delta_text(d_labor: float, d_wood: float) -> String:
+	var parts: PackedStringArray = []
+	for pair in [[d_labor, "labor"], [d_wood, "wood"]]:
+		var d := roundi(float(pair[0]))
+		if d != 0:
+			parts.append("%s%d %s" % ["+" if d > 0 else "−", absi(d), pair[1]])
+	return "  ".join(parts)
 
 
 ## Building on a low river bank is allowed (fertile silt!) but the player should know the risk.

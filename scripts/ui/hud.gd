@@ -73,6 +73,9 @@ var _season_icon: TextureRect
 var _seed := 0
 var _chips_flow: HFlowContainer
 var _chips := {}           ## key -> {panel, value, icon}
+var _chip_prev := {}       ## key -> last numeric value (for "+N" gain floaters)
+var _chip_ws := 0          ## instance id of the WorldState those values came from
+const GAIN_MIN := {"food": 5.0, "wood": 1.0, "villagers": 1.0}
 var _keystone_bar: ProgressBar
 var _keystone_value: Label
 var _speed_card: PanelContainer
@@ -512,6 +515,7 @@ func set_day(day: int) -> void:
 
 
 func set_status(ws: WorldState) -> void:
+	_gain_floaters(ws)
 	var cap := ws.housing_capacity()
 	_chip("villagers", "%d/%d" % [ws.villagers, cap], ws.housing_event >= 0)
 	_chip("food", "%d" % roundi(ws.food_store), ws.food_event >= 0)
@@ -553,6 +557,50 @@ func _chip(key: String, text: String, warn: bool) -> void:
 	var ic := c["icon"] as TextureRect
 	if ic != null:
 		ic.self_modulate = UiKit.CORAL if warn else UiKit.TEAL_DARK
+
+
+## A small "+N" rises off a chip when that stock grows (harvest, new villager, cleared forest).
+func _gain_floaters(ws: WorldState) -> void:
+	var now := {"food": ws.food_store, "wood": ws.wood, "villagers": float(ws.villagers)}
+	var same := _chip_ws == ws.get_instance_id() and not ws.free_build
+	_chip_ws = ws.get_instance_id()
+	for key in now:
+		var v: float = now[key]
+		if same and _chip_prev.has(key) and v - float(_chip_prev[key]) >= float(GAIN_MIN[key]) and visible:
+			chip_floater(key, "+%d" % roundi(v - float(_chip_prev[key])))
+		_chip_prev[key] = v
+
+
+func chip_floater(key: String, text: String) -> Label:
+	var p: Control = _chips[key]["panel"]
+	if not p.is_visible_in_tree():
+		return null
+	var l: Label = null
+	if p.has_meta("floater") and is_instance_valid(p.get_meta("floater")):
+		l = p.get_meta("floater")  # one per chip: retarget instead of stacking
+		l.text = text
+	else:
+		l = UiKit.label(text, 15, "Value")
+		l.add_theme_color_override("font_color", UiKit.LEAF)
+		l.add_theme_color_override("font_outline_color", Color(1, 1, 1, 0.9))
+		l.add_theme_constant_override("outline_size", 4)
+		l.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		root.add_child(l)
+		p.set_meta("floater", l)
+	l.reset_size()
+	var r := p.get_global_rect()
+	var at := Vector2(r.end.x - l.size.x * 0.6, r.end.y - 6.0) - root.global_position
+	l.position = at
+	l.modulate.a = 1.0
+	if l.has_meta("tw"):
+		(l.get_meta("tw") as Tween).kill()
+	var tw := l.create_tween().set_parallel(true)
+	if not UiKit.reduce_motion:
+		tw.tween_property(l, "position", at + Vector2(0, 14), 0.9).set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_OUT)
+	tw.tween_property(l, "modulate:a", 0.0, 0.4).set_delay(0.8)
+	tw.chain().tween_callback(l.queue_free)
+	l.set_meta("tw", tw)
+	return l
 
 
 func status_text() -> String:
@@ -606,7 +654,8 @@ func set_goals_collapsed(on: bool) -> void:
 	_obj_chev.icon = UiKit.icon_tex("chevron-right" if on else "chevron-down")
 	_obj_chev.tooltip_text = "Show goals" if on else "Hide goals"
 	relayout()
-	UiKit.appear(_obj_card, Vector2.ZERO, 0.18)
+	if _obj_card.visible:
+		UiKit.appear(_obj_card, Vector2.ZERO, 0.18)
 
 
 func goals_collapsed() -> bool:

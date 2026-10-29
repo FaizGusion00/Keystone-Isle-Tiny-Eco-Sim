@@ -24,6 +24,11 @@ var smooth := true             ## eased wheel/key zoom and glides (off with redu
 var _zoom_target := 0.0        ## 0 = no zoom animation running
 var _zoom_anchor := Vector2.ZERO
 var _glide_to := Vector2.INF
+var _vel := Vector2.ZERO       ## recent drag velocity (world px / s), for fling inertia
+var _last_drag_us := 0
+var fling := Vector2.ZERO      ## coasting velocity after a quick drag release (smooth only)
+const FLING_MIN := 120.0       ## slower releases just stop
+const FLING_DECAY := 5.0
 
 
 func set_bounds(r: Rect2) -> void:
@@ -105,7 +110,14 @@ func _process(delta: float) -> void:
 			position = _glide_to
 			_glide_to = Vector2.INF
 		_clamp()
+	if fling != Vector2.ZERO:
+		position += fling * delta
+		_clamp()
+		fling *= exp(-FLING_DECAY * delta)
+		if fling.length() * zoom.x < 20.0:
+			fling = Vector2.ZERO
 	if not input_enabled:
+		fling = Vector2.ZERO
 		return
 	var dir := Input.get_vector("ui_left", "ui_right", "ui_up", "ui_down")
 	if dir != Vector2.ZERO:
@@ -116,8 +128,10 @@ func _process(delta: float) -> void:
 func _unhandled_input(event: InputEvent) -> void:
 	if not input_enabled:
 		return
-	if event is InputEventMouseButton or event is InputEventScreenDrag:
+	if event is InputEventMouseButton or event is InputEventScreenDrag or event is InputEventScreenTouch:
 		_glide_to = Vector2.INF
+		if event.is_pressed() or event is InputEventScreenDrag:
+			fling = Vector2.ZERO
 	if event is InputEventMouseButton:
 		if event.device == InputEvent.DEVICE_ID_EMULATION:
 			return # touch is handled via ScreenTouch/ScreenDrag
@@ -134,6 +148,8 @@ func _unhandled_input(event: InputEvent) -> void:
 			else:
 				if mb.button_index == MOUSE_BUTTON_LEFT and _mouse_down and not _mouse_dragged:
 					tile_tapped.emit(mb.position)
+				elif _mouse_dragged:
+					release_drag()
 				_mouse_down = false
 	elif event is InputEventMouseMotion:
 		if event.device == InputEvent.DEVICE_ID_EMULATION or not _mouse_down:
@@ -142,8 +158,7 @@ func _unhandled_input(event: InputEvent) -> void:
 		if not _mouse_dragged and mm.position.distance_to(_press_pos) > TAP_SLOP:
 			_mouse_dragged = true
 		if _mouse_dragged:
-			position -= mm.relative / zoom.x
-			_clamp()
+			drag_by(mm.relative)
 	elif event is InputEventScreenTouch:
 		var st := event as InputEventScreenTouch
 		if st.pressed:
@@ -157,6 +172,8 @@ func _unhandled_input(event: InputEvent) -> void:
 		else:
 			if _touches.size() == 1 and not _touch_dragged and st.position.distance_to(_press_pos) <= TAP_SLOP:
 				tile_tapped.emit(st.position)
+			elif _touches.size() == 1 and _touch_dragged:
+				release_drag()
 			_touches.erase(st.index)
 			if _touches.size() == 2:
 				_start_pinch()
@@ -167,8 +184,7 @@ func _unhandled_input(event: InputEvent) -> void:
 			if not _touch_dragged and sd.position.distance_to(_press_pos) > TAP_SLOP:
 				_touch_dragged = true
 			if _touch_dragged:
-				position -= sd.relative / zoom.x
-				_clamp()
+				drag_by(sd.relative)
 		elif _touches.size() >= 2 and _pinch_dist > 0.0:
 			var pts: Array = _touches.values()
 			var a: Vector2 = pts[0]
@@ -184,7 +200,27 @@ func _unhandled_input(event: InputEvent) -> void:
 			zoom_smooth(get_viewport_rect().size * 0.5, 1.0 / 1.15)
 
 
+## Pan by a screen-space drag delta and remember how fast the finger was moving.
+func drag_by(rel: Vector2) -> void:
+	var d := -rel / zoom.x
+	position += d
+	_clamp()
+	var now := Time.get_ticks_usec()
+	var dt := clampf((now - _last_drag_us) / 1000000.0, 0.004, 0.1)
+	_last_drag_us = now
+	_vel = _vel.lerp(d / dt, 0.5) if dt < 0.1 else d / dt
+
+
+## Finger/mouse up after a drag: coast on (unless motion is reduced or the drag had stopped).
+func release_drag() -> void:
+	var idle := (Time.get_ticks_usec() - _last_drag_us) / 1000000.0
+	fling = _vel if smooth and idle < 0.08 and _vel.length() * zoom.x > FLING_MIN else Vector2.ZERO
+	fling = fling.limit_length(3000.0 / zoom.x)
+	_vel = Vector2.ZERO
+
+
 func _start_pinch() -> void:
+	_vel = Vector2.ZERO
 	var pts: Array = _touches.values()
 	_pinch_dist = (pts[0] as Vector2).distance_to(pts[1])
 	_pinch_zoom = zoom.x

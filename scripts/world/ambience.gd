@@ -194,5 +194,33 @@ func pop(tile: Vector2i, color: Color = Color(1, 0.95, 0.75)) -> void:
 	var ring := PopRing.new()
 	ring.position = view.position + view.top_center(tile.x, tile.y)
 	ring.color = color
+	ring.still = reduce_motion
 	ring.z_index = 30
 	add_child(ring)
+
+
+## "−2 labor" style text that rises off a tile and fades (cost / gain feedback).
+## With reduce motion it fades in place instead of rising.
+func float_text(tile: Vector2i, text: String, color: Color = Color(1, 1, 1)) -> Label:
+	if view == null or text == "":
+		return null
+	var l := Label.new()
+	l.text = text
+	l.add_theme_font_override("font", UiKit.font(false, 700))
+	l.add_theme_font_size_override("font_size", 15)
+	l.add_theme_color_override("font_color", color)
+	l.add_theme_color_override("font_outline_color", Color(0.10, 0.14, 0.16, 0.85))
+	l.add_theme_constant_override("outline_size", 5)
+	l.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	l.z_index = 40
+	add_child(l)
+	l.reset_size()
+	var at := view.position + view.top_center(tile.x, tile.y) - Vector2(l.size.x * 0.5, 34.0)
+	l.position = at
+	var tw := l.create_tween().set_parallel(true)
+	l.set_meta("rises", not reduce_motion)
+	if not reduce_motion:
+		tw.tween_property(l, "position", at + Vector2(0, -26), 1.1).set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_OUT)
+	tw.tween_property(l, "modulate:a", 0.0, 0.45).set_delay(0.75)
+	tw.chain().tween_callback(l.queue_free)
+	return l

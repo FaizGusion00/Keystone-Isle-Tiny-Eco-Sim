@@ -128,6 +128,30 @@ func test_camera_zoom_eases_to_target() -> void:
 	cam.free()
 
 
+func test_camera_flings_after_quick_drag_unless_reduced_motion() -> void:
+	var cam := CameraController.new()
+	(Engine.get_main_loop() as SceneTree).root.add_child(cam)
+	cam.bounds = Rect2(-5000, -5000, 10000, 10000)
+	cam.zoom = Vector2.ONE
+	cam.smooth = true
+	cam._last_drag_us = Time.get_ticks_usec() - 16000
+	cam.drag_by(Vector2(-20, 0))
+	cam.release_drag()
+	assert_true(cam.fling.x > 0.0, "a quick drag coasts on (%s)" % cam.fling)
+	var x0 := cam.position.x
+	for i in 90:
+		cam._process(0.016)
+	assert_true(cam.position.x > x0 + 5.0, "it keeps moving after release")
+	assert_eq(cam.fling, Vector2.ZERO, "and comes to rest")
+	cam.smooth = false
+	cam._last_drag_us = Time.get_ticks_usec() - 16000
+	cam.drag_by(Vector2(-20, 0))
+	cam.release_drag()
+	assert_eq(cam.fling, Vector2.ZERO, "reduce motion: stops dead")
+	cam.get_parent().remove_child(cam)
+	cam.free()
+
+
 func test_every_event_type_has_an_icon() -> void:
 	assert_eq(Hud.event_icon(EventLog.Type.FLOOD), "waves")
 	for t in EventLog.TYPE_NAMES:
@@ -210,6 +234,37 @@ func test_resource_chips_are_labelled_and_explain_on_tap() -> void:
 		if c.has_meta("chip_tip") and not c.is_queued_for_deletion():
 			tips += 1
 	assert_eq(tips, 1, "repeated taps replace the explanation")
+	_free(main)
+
+
+func test_juice_floaters_respect_reduce_motion() -> void:
+	var main := _main()
+	assert_eq(main._delta_text(-1.0, -2.0), "−1 labor  −2 wood")
+	assert_eq(main._delta_text(0.0, 3.0), "+3 wood")
+	assert_eq(main._delta_text(0.0, 0.0), "")
+	var ws: WorldState = main.sim.world
+	ws.free_build = false
+	main.hud.set_status(ws)
+	ws.food_store += 30.0
+	main.hud.set_status(ws)
+	var f: Control = main.hud._chips["food"]["panel"]
+	assert_true(f.has_meta("floater") and is_instance_valid(f.get_meta("floater")), "a harvest floats +N off the food chip")
+	assert_eq((f.get_meta("floater") as Label).text, "+30")
+	ws.food_store += 1.0
+	var before: Label = f.get_meta("floater")
+	main.hud.set_status(ws)
+	assert_eq((f.get_meta("floater") as Label).text, "+30", "tiny changes stay quiet")
+	assert_true(f.get_meta("floater") == before, "one floater per chip")
+	var old := UiKit.reduce_motion
+	UiKit.reduce_motion = true
+	main.ambience.reduce_motion = true
+	var l: Label = main.ambience.float_text(Vector2i(5, 5), "−1 labor")
+	assert_false(bool(l.get_meta("rises")), "reduce motion: floater fades in place")
+	main.ambience.pop(Vector2i(5, 5))
+	var ring: PopRing = main.ambience.get_child(main.ambience.get_child_count() - 1)
+	assert_true(ring.still, "reduce motion: pop is a flash, not a ring")
+	UiKit.reduce_motion = old
+	main.ambience.reduce_motion = old
 	_free(main)
 
 
