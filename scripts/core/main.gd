@@ -9,6 +9,8 @@ const MAP_SIZE := 32
 @onready var camera: CameraController = $Camera
 @onready var hud: Hud = $HUD
 @onready var clock: SimClock = $Clock
+var ambience: Ambience
+var settings := GameSettings.new()
 
 const AUTOSAVE_EVERY := 30 ## ticks
 
@@ -30,6 +32,9 @@ var _scenario_status := -1
 
 
 func _ready() -> void:
+	ambience = Ambience.new()
+	ambience.name = "Ambience"
+	add_child(ambience)
 	camera.tile_tapped.connect(_on_tile_tapped)
 	hud.new_island_requested.connect(_on_new_island)
 	hud.speed_requested.connect(set_speed)
@@ -42,6 +47,12 @@ func _ready() -> void:
 	persistence = args.is_empty() or args.has("--restore")
 	if persistence:
 		SaveSystem.migrate_v1_file()
+		settings = GameSettings.load_from()
+	if args.has("--reduce-motion"):
+		settings.values["reduce_motion"] = true
+	if args.has("--colorblind"):
+		settings.values["colorblind"] = true
+	apply_settings()
 	set_speed(SimClock.Speed.NORMAL)
 	if not (persistence and restore_from_disk()):
 		if persistence or args.has("--tutorial"):
@@ -49,6 +60,16 @@ func _ready() -> void:
 		else:
 			new_world(DEFAULT_SEED)
 	DebugTools.handle_cmdline(self)
+
+
+## Push visual/audio settings into the running game (called at start and whenever they change).
+func apply_settings() -> void:
+	var calm := bool(settings.get_value("reduce_motion"))
+	world_view.set_motion(not calm)
+	ambience.reduce_motion = calm
+	if bool(settings.get_value("colorblind")) != world_view.colorblind:
+		world_view.set_colorblind(bool(settings.get_value("colorblind")))
+	settings.apply_audio()
 
 
 func new_world(world_seed: int) -> void:
@@ -74,8 +95,9 @@ func set_simulation(s: Simulation) -> void:
 	_seen_event_id = sim.events.next_id
 	hud.hide_events()
 	clock.sim = sim
-	world_view.set_world(sim.world)
-	camera.set_bounds(Iso.map_bounds(sim.world.width, sim.world.height))
+	world_view.set_world(sim.world, sim.events)
+	ambience.set_world(world_view)
+	camera.set_bounds(Iso.map_bounds(sim.world.width, sim.world.height).grow_individual(0, WorldView.MAX_H, 0, 0))
 	hud.set_seed(sim.world.world_seed)
 	hud.set_day(sim.world.tick)
 	hud.set_status(sim.world)
@@ -97,7 +119,7 @@ func select_tile(t: Vector2i) -> void:
 
 func pick_tile(screen_pos: Vector2) -> Vector2i:
 	var world_pos := get_viewport().get_canvas_transform().affine_inverse() * screen_pos
-	return Iso.local_to_tile(world_view.to_local(world_pos))
+	return world_view.pick(world_view.to_local(world_pos))
 
 
 func _on_tile_tapped(screen_pos: Vector2) -> void:
@@ -113,6 +135,7 @@ func _on_tile_tapped(screen_pos: Vector2) -> void:
 		else:
 			sim.apply_action(action, t.x, t.y)
 			world_view.refresh()
+			ambience.pop(t)
 	select_tile(t)
 
 
@@ -155,6 +178,7 @@ func _on_ticked(count: int) -> void:
 
 func _refresh_ui() -> void:
 	world_view.refresh()
+	ambience.update_from_world()
 	hud.set_status(sim.world)
 	hud.set_day(sim.world.tick)
 	if sim.scenario != null:

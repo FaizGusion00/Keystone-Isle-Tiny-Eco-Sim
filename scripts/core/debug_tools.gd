@@ -38,6 +38,7 @@ static func handle_cmdline(main: Node) -> void:
 		main.world_view.refresh()
 		main.hud.set_day(main.sim.world.tick)
 		main.hud.set_status(main.sim.world)
+		main.ambience.update_from_world(true)
 	if args.has("away"):
 		# simulate leaving the app for N seconds: suspend → (time passes) → resume → catch-up
 		main.hud.clear_popups() # the player dismissed the intro before leaving
@@ -61,6 +62,12 @@ static func handle_cmdline(main: Node) -> void:
 					sel = id
 					break
 		main.hud.show_events(main.sim.events, sel)
+	if args.has("focus"):
+		var fc: Vector2i = main.sim.world.coords(main.sim.world.settlement_index)
+		if String(args["focus"]) != "village":
+			var fp: PackedStringArray = String(args["focus"]).split(",")
+			fc = Vector2i(int(fp[0]), int(fp[1]))
+		main.camera.position = main.world_view.position + main.world_view.top_center(fc.x, fc.y)
 	if args.has("select"):
 		var p: PackedStringArray = String(args["select"]).split(",")
 		main.select_tile(Vector2i(int(p[0]), int(p[1])))
