@@ -71,7 +71,7 @@ Tick order (after vegetation and event detection): **crops → wildlife → sett
 | Goats | Logistic, r = 0.03, capacity 0.15 × total pasture vegetation (lowland/grassland/hills); grazing removes `goats × 0.004` cover spread over pasture. |
 | Village food | Catch `min(fish·0.02, villagers·0.06)` + hunt `min(goats·0.01, villagers·0.03)` → store (max 150). Need 0.1/villager/day; `food_ema` = EMA of fraction met. |
 | Village water | Supply = Σ within 3 tiles of (flow + 0.5·surface water + 0.02·max(moisture−0.2, 0)); need 0.05/villager; `water_ema` = EMA of min(supply/need, 1). |
-| Population | Every 30 days: −1 if either EMA < 0.6 (`POPULATION_LOSS`, caused by the active shortages); +1 if both > 0.95 and store ≥ 3 days per villager (`POPULATION_GROWTH`, root cause "plenty of food and water"). |
+| Population | Every `POP_PERIOD` = 20 days: −1 if either EMA < 0.6 (`POPULATION_LOSS`, caused by the active shortages; skipped in Relaxed mode); if both EMAs > 0.95 and the store holds ≥ 3 food per villager, grows by `max(1, villagers / 8)` up to the housing cap (`POPULATION_GROWTH`, root cause "plenty of food and water"). At the cap it records `HOUSING_FULL` once instead. |
 
 Life events (all hysteresis, so they fire once per episode):
 
@@ -92,3 +92,43 @@ Fixed seed 12345. **Win:** ≥ 12 villagers with ≥ 1 farm built, before day 24
 catch-up). The fail popup includes the recorded cause chain of the latest population loss /
 shortage, e.g. *Villagers left ← Food shortage ← Fish declining ← Muddy water ← Erosion ←
 Trees cleared*. Scenario state is part of the save and the checksum.
+
+## 8. Labour, wood and building (M6)
+- Labour regenerates `0.1` per villager per day up to `10 + villagers`; wood comes from clearing forest (`+4`, max 99).
+- Costs `[labour, wood]`: clear 1/0, plant 1/0, farm 3/2, house 3/6, dam 6/10, restore 2/0, remove 1/0
+  (Relaxed halves them; sandbox free-build zeroes them).
+- Housing cap = `12 + 4 × houses`. Houses go within 2 tiles of the village or next to another house.
+
+## 9. Dams
+- Only on a stream (`upstream_area ≥ 6`). A dam stores up to 2.0 water, releases 0.03/day once it holds some,
+  loses 0.004/day to evaporation, and holds neighbouring soil moisture at ≥ 0.30 (irrigation).
+- A dam on a river (`upstream_area ≥ 20`) blocks fish runs: fish capacity −12 % per river dam. Smaller streams
+  let fish pass. The inspector says which ("River dam: blocks fish" / "Small stream: fish pass").
+
+## 10. Floods (`_floods`)
+- **River stage** of river tile r = `flow / √upstream_area`. Streams with catchment ≥ 12 have a
+  **floodplain**: land tiles next to the river whose banks are at most 0.035 above it (`floodplain[i]` = that river
+  tile, else −1).
+- A floodplain tile floods when the stage reaches `0.22 + 0.15 × (bank rise / 0.035)` — low banks flood first.
+  The inspector shows this as "Floodplain" / "High bank" with the river level in %; building a farm or house on
+  the lowest banks (`flood_risk == 2`) shows a warning toast.
+- Any built tile (not dams) also floods when ≥ 0.6 surface water pools on it.
+- A flood (cooldown 15 days per tile) records `FLOOD` caused by heavy rain in the last few days and the most
+  recent clearing/burn up to 6 steps upstream. An overbank flood spreads ≥ 0.35 water and leaves +0.03 topsoil (silt).
+- Damage: an overbank flood halves a growing crop; a deep flood wipes it (`HARVEST_LOST` if > 25 % grown);
+  houses / the village lose 15 % of the food store.
+- Counterplay: dense vegetation holds back `10 % × cover` of each day's runoff (forests upstream lower the stage),
+  dams store the peak, and building on high banks avoids the floodplain.
+
+## 11. Wildfire (`_wildfire`)
+- Only during a drought or the dry season. Each dense (veg ≥ 0.5), dry (moisture < 0.08) land tile without a
+  building (farms allowed) ignites with chance `0.0015 × climate_fire` per day (× 0.3 outside droughts), using a
+  per-tile hash so the weather RNG stream is untouched. One fire at a time (`WILDFIRE`).
+- Fire burns 3 days per tile, cuts vegetation ×0.4 and moisture ×0.7 each day, destroys growing crops, spreads to
+  neighbours with veg > 0.3 and moisture < 0.15 (45 %/day). Houses and the village are defended.
+  Rain ≥ 0.02 puts it out. Burned forest becomes open land (veg ≤ 0.04) that then erodes. Ends with `FIRE_OUT`.
+
+## 12. Keystone score
+`100 × (0.2·plants + 0.2·soil + 0.15·water clarity + 0.15·fish + 0.1·wildlife + 0.2·village)`, each part in 0–1:
+plants = mean land vegetation / 0.55, soil = mean depth / 0.75, water = 1 − (turbidity − 0.01)/0.05, fish / 100,
+goats / 25, village = min(food EMA, water EMA).
