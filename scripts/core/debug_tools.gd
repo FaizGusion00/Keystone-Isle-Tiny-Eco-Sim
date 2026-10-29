@@ -6,6 +6,7 @@ extends RefCounted
 ##            [--tutorial] [--restore] [--away=SECONDS]
 ##            [--farms=N] [--farms-at=x,y;x,y] [--dams=N] [--until=EVENT_TYPE_NAME] [--no-results] [--overlay=0..4] [--history[=EVENT_TYPE_NAME]]
 ##            [--focus=village|dam|event|x,y] [--select=village|dam|event|x,y]  (dam = last --dams tile, event = the --until hit)
+##            [--perf=FRAMES]  (render FRAMES frames while the sim plays, print frame/render timings, quit)
 
 
 static func handle_cmdline(main: Node) -> void:
@@ -122,8 +123,41 @@ static func handle_cmdline(main: Node) -> void:
 			var p: PackedStringArray = String(args["select"]).split(",")
 			st = Vector2i(int(p[0]), int(p[1]))
 		main.select_tile(st)
-	if args.has("screenshot"):
+	if args.has("perf"):
+		_perf(main, int(args["perf"]))
+	elif args.has("screenshot"):
 		_screenshot(main, String(args["screenshot"]), int(args.get("frames", "30")))
+
+
+## Frame timing on a real renderer (run under a display, e.g. xvfb; the headless driver draws
+## nothing). Reports wall-clock frame time and the viewport's measured CPU/GPU
+## render time as median and 95th percentile, skipping the first 60 warm-up frames.
+static func _perf(main: Node, frames: int) -> void:
+	var vp: RID = main.get_viewport().get_viewport_rid()
+	RenderingServer.viewport_set_measure_render_time(vp, true)
+	var wall: Array[float] = []
+	var rcpu: Array[float] = []
+	var rgpu: Array[float] = []
+	for f in 60:
+		await main.get_tree().process_frame
+	var t0 := Time.get_ticks_usec()
+	var tick0: int = main.sim.world.tick
+	for f in frames:
+		await main.get_tree().process_frame
+		var t := Time.get_ticks_usec()
+		wall.append((t - t0) / 1000.0)
+		t0 = t
+		rcpu.append(RenderingServer.viewport_get_measured_render_time_cpu(vp))
+		rgpu.append(RenderingServer.viewport_get_measured_render_time_gpu(vp))
+	var line := "perf: %d frames  %dx%d tiles  sim ticks %d  draw calls %d  |" % [frames, main.sim.world.width,
+		main.sim.world.height, main.sim.world.tick - tick0,
+		Performance.get_monitor(Performance.RENDER_TOTAL_DRAW_CALLS_IN_FRAME)]
+	for pair in [["frame", wall], ["render_cpu", rcpu], ["render_gpu", rgpu]]:
+		var a: Array[float] = pair[1]
+		a.sort()
+		line += "  %s med %.2f p95 %.2f ms" % [pair[0], a[a.size() / 2], a[int(a.size() * 0.95)]]
+	print(line)
+	main.quit_game()
 
 
 static func _screenshot(main: Node, path: String, frames: int) -> void:

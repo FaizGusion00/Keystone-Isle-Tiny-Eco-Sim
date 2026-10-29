@@ -578,7 +578,7 @@ func draw_tile(cv: CanvasItem, x: int, y: int) -> void:
 	var t: int = world.land_type[i]
 	if LandType.is_water(t):
 		if overlay != Overlay.NONE:
-			cv.draw_colored_polygon(Iso.tile_polygon(x, y), tile_colors[i] * Color(1, 1, 1, 0.55))
+			_flat_quad(cv, Iso.tile_polygon(x, y), tile_colors[i] * Color(1, 1, 1, 0.55))
 		elif _corner_fill.size() > i and _corner_fill[i] != 0:
 			_draw_corner_fill(cv, x, y, i)
 		return
@@ -595,20 +595,20 @@ func draw_tile(cv: CanvasItem, x: int, y: int) -> void:
 	var side := SIDE_SAND if t == LandType.BEACH else (SIDE_ROCK if t == LandType.HILLS else SIDE_SOIL)
 	# banks only at the shore and map edge; inland tiles share corners, so they meet seamlessly
 	if y + 1 >= world.height or LandType.is_water(world.land_type[i + w]):
-		cv.draw_polygon(PackedVector2Array([nw, ns, ns + Vector2(0, _ch(x + 1, y + 1)), nw + Vector2(0, _ch(x, y + 1))]),
-			PackedColorArray([side.darkened(0.08), side.darkened(0.12), side.darkened(0.42), side.darkened(0.38)]))
-		cv.draw_colored_polygon(PackedVector2Array([nw, ns, ns + Vector2(0, 2.0), nw + Vector2(0, 2.0)]), col.darkened(0.22))
+		cv.draw_primitive(PackedVector2Array([nw, ns, ns + Vector2(0, _ch(x + 1, y + 1)), nw + Vector2(0, _ch(x, y + 1))]),
+			PackedColorArray([side.darkened(0.08), side.darkened(0.12), side.darkened(0.42), side.darkened(0.38)]), NO_UV)
+		_flat_quad(cv, PackedVector2Array([nw, ns, ns + Vector2(0, 2.0), nw + Vector2(0, 2.0)]), col.darkened(0.22))
 	if x + 1 >= w or LandType.is_water(world.land_type[i + 1]):
-		cv.draw_polygon(PackedVector2Array([ns, ne, ne + Vector2(0, _ch(x + 1, y)), ns + Vector2(0, _ch(x + 1, y + 1))]),
-			PackedColorArray([side.darkened(0.30), side.darkened(0.26), side.darkened(0.55), side.darkened(0.58)]))
-		cv.draw_colored_polygon(PackedVector2Array([ns, ne, ne + Vector2(0, 2.0), ns + Vector2(0, 2.0)]), col.darkened(0.36))
+		cv.draw_primitive(PackedVector2Array([ns, ne, ne + Vector2(0, _ch(x + 1, y)), ns + Vector2(0, _ch(x + 1, y + 1))]),
+			PackedColorArray([side.darkened(0.30), side.darkened(0.26), side.darkened(0.55), side.darkened(0.58)]), NO_UV)
+		_flat_quad(cv, PackedVector2Array([ns, ne, ne + Vector2(0, 2.0), ns + Vector2(0, 2.0)]), col.darkened(0.36))
 	# top: per-vertex colour variation and slope light, both shared with neighbours => seamless
 	var ao := overlay == Overlay.NONE
-	cv.draw_polygon(_cur, PackedColorArray([
+	cv.draw_primitive(_cur, PackedColorArray([
 		_vary(col, x, y) * _lit(y * cw + x) * (_occl(x, y) if ao else Color.WHITE),
 		_vary(col, x + 1, y) * _lit(y * cw + x + 1) * (_occl(x + 1, y) if ao else Color.WHITE),
 		_vary(col, x + 1, y + 1) * _lit((y + 1) * cw + x + 1) * (_occl(x + 1, y + 1) if ao else Color.WHITE),
-		_vary(col, x, y + 1) * _lit((y + 1) * cw + x) * (_occl(x, y + 1) if ao else Color.WHITE)]))
+		_vary(col, x, y + 1) * _lit((y + 1) * cw + x) * (_occl(x, y + 1) if ao else Color.WHITE)]), NO_UV)
 	if overlay != Overlay.NONE:
 		_draw_structure(cv, i, top)
 		return
@@ -622,6 +622,18 @@ func draw_tile(cv: CanvasItem, x: int, y: int) -> void:
 	if (deco >> 17) & 1:
 		_draw_floodwater(cv, i, top)
 	_draw_nature(cv, x, y, i, top, deco)
+
+
+## Quads go through draw_primitive, which the Compatibility renderer batches (a polygon is
+## always its own draw call).
+var NO_UV := PackedVector2Array()
+
+
+func _flat_quad(cv: CanvasItem, pts: PackedVector2Array, c: Color) -> void:
+	if pts.size() == 4:
+		cv.draw_primitive(pts, PackedColorArray([c, c, c, c]), NO_UV)
+	else:
+		cv.draw_colored_polygon(pts, c)
 
 
 ## Fills a notch in a diagonal coastline with a low half-tile bank of the neighbour's ground,
@@ -684,26 +696,18 @@ func _occl(a: int, b: int) -> Color:
 	return Color(1.0 - occ * 0.42, 1.0 - occ * 0.34, 1.0 - occ * 0.22, 1.0)
 
 
-## A soft shadow cast toward the lower right (sun at the upper left): a wide faint ellipse with a
-## tighter core, stretched by `reach` (tall things throw longer shadows). Drawn on the ground
-## before the sprites of the tile, so it never darkens a tree or a roof.
-const SHADOW := Color(0.05, 0.10, 0.09, 0.14)
-static var _unit_ellipse := PackedVector2Array()
+## A soft shadow cast toward the lower right (sun at the upper left): a radial-gradient blob
+## from the atlas, stretched by `reach` (tall things throw longer shadows). Drawn on the ground
+## before the tile's sprites, so it never darkens a tree or a roof. Being an atlas sprite it
+## batches with the trees instead of costing a draw call per shadow.
+const SHADOW := Color(1, 1, 1, 0.5)
 
 
 func _cast_shadow(cv: CanvasItem, at: Vector2, rx: float, reach: float) -> void:
-	if _unit_ellipse.is_empty():
-		for k in 14:
-			var an := TAU * k / 14.0
-			_unit_ellipse.append(Vector2(cos(an), sin(an)))
-	var c := at + Vector2(rx * 0.45 * reach, rx * 0.12 * reach)
-	var outer := PackedVector2Array()
-	var inner := PackedVector2Array()
-	for u in _unit_ellipse:
-		outer.append(c + Vector2(u.x * rx * (1.0 + 0.4 * reach), u.y * rx * 0.46))
-		inner.append(c + Vector2(u.x * rx * 0.72 - rx * 0.12, u.y * rx * 0.28))
-	cv.draw_colored_polygon(outer, SHADOW)
-	cv.draw_colored_polygon(inner, SHADOW)
+	var r: Array = ArtAtlas.R["cast_shadow"]
+	var c := at + Vector2(rx * 0.42 * reach, rx * 0.1 * reach)
+	var sz := Vector2(rx * 2.1 * (1.0 + 0.35 * reach), rx * 0.95)
+	cv.draw_texture_rect_region(ArtAtlas.TEXTURE, Rect2(c - sz * 0.5, sz), Rect2(r[0], r[1], r[2], r[3]), SHADOW)
 
 
 ## Sprite footprint (world px) and how far its shadow reaches, for the casters.

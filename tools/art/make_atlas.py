@@ -216,6 +216,8 @@ b += '<ellipse cx="0" cy="-4" rx="4.2" ry="2.6" fill="#7a6250"/><ellipse cx="0.5
 b += '<rect x="-3" y="-2.4" width=".9" height="3" fill="#3e342c"/><rect x="2" y="-2.4" width=".9" height="3" fill="#3e342c"/>'
 b += '<ellipse cx="4.4" cy="-6" rx="1.6" ry="1.3" fill="#86705c"/><path d="M4.6 -7 L5.5 -8.8" stroke="#5a4e40" stroke-width=".7"/>'
 add("goat_b", b, 14, 12, 7, 10)
+# soft ground shadow, stretched per caster at draw time (batches with every other sprite)
+add("cast_shadow", '<ellipse cx="0" cy="0" rx="19.5" ry="7.5" fill="url(#sh)" opacity=".85"/>', 40, 16, 20, 8)
 # villagers (walkers): tiny figure, shirt colour varies
 for nm, shirt, pants in [("villager_a", "#d9694a", "#4d4a5c"), ("villager_b", "#4f8fb8", "#5a4a3c"),
                          ("villager_c", "#e0b84a", "#3f4f46")]:
