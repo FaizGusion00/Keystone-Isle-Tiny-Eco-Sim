@@ -5,7 +5,7 @@ extends TestCase
 func _clear_all_forest(sim: Simulation) -> void:
 	for y in sim.world.height:
 		for x in sim.world.width:
-			sim.apply_action(Simulation.Action.CLEAR_TREES, x, y)
+			if sim.world.land_type[sim.world.index(x, y)] == LandType.FOREST: sim.apply_action(Simulation.Action.CLEAR_TREES, x, y)
 
 
 func _build_farms(sim: Simulation, n: int) -> int:
@@ -111,6 +111,7 @@ func test_goats_graze_and_are_bounded() -> void:
 func test_full_chain_clearing_to_hunger() -> void:
 	# The headline chain: cut trees -> erosion -> muddy coast -> fish decline -> food shortage.
 	var sim := Simulation.create(12345, 32)
+	sim.world.free_build = true
 	_clear_all_forest(sim)
 	sim.run(120)
 	var fish_ev := _first_of_type(sim, EventLog.Type.FISH_DECLINE)

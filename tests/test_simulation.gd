@@ -6,7 +6,7 @@ func _all_land_forest_cleared(sim: Simulation) -> int:
 	var n := 0
 	for y in sim.world.height:
 		for x in sim.world.width:
-			if sim.apply_action(Simulation.Action.CLEAR_TREES, x, y):
+			if sim.world.land_type[sim.world.index(x, y)] == LandType.FOREST and sim.apply_action(Simulation.Action.CLEAR_TREES, x, y):
 				n += 1
 	return n
 
@@ -92,6 +92,7 @@ func test_two_buffer_flow_is_order_independent() -> void:
 func test_clearing_forest_increases_erosion_and_turbidity() -> void:
 	var control := Simulation.create(12345, 32)
 	var cleared := Simulation.create(12345, 32)
+	cleared.world.free_build = true
 	var n := _all_land_forest_cleared(cleared)
 	assert_true(n > 20, "cleared %d forest tiles" % n)
 	var sea_c := 0.0
@@ -123,7 +124,10 @@ func test_plant_and_clear_rules() -> void:
 	var f := ws.coords(forest)
 	var g := ws.coords(grass)
 	var s := ws.coords(sea)
+	var veg := ws.vegetation_cover[grass]
+	ws.vegetation_cover[grass] = 0.1
 	assert_eq(sim.can_apply(Simulation.Action.CLEAR_TREES, g.x, g.y), "No trees here")
+	ws.vegetation_cover[grass] = veg
 	assert_false(sim.apply_action(Simulation.Action.PLANT_TREES, s.x, s.y))
 	assert_true(sim.apply_action(Simulation.Action.CLEAR_TREES, f.x, f.y))
 	assert_ne(ws.land_type[forest], LandType.FOREST)

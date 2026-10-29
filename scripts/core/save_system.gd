@@ -2,7 +2,7 @@ class_name SaveSystem
 extends RefCounted
 ## Versioned local JSON saves with atomic writes and a backup.
 ##
-## Format (version 1):
+## Format (version 2; version 1 files are migrated on load - see from_dict):
 ##   { version, saved_at (unix s), meta{...}, world{width,height,seed,arrays{name: base64},
 ##     scalars{name: value}}, events{...EventLog.to_dict()}, rng{seed,state} (strings, 64-bit safe),
 ##     scenario{...} | null }
@@ -12,8 +12,44 @@ extends RefCounted
 ## <path>.tmp renamed to <path>. A crash at any point leaves either the old save, the backup,
 ## or the new save intact. load_game() falls back to the .bak if the main file is missing/corrupt.
 
-const VERSION := 1
-const DEFAULT_PATH := "user://keystone_save.json"
+const VERSION := 2
+const SAVE_DIR := "user://saves"
+const DEFAULT_PATH := "user://saves/autosave.json"
+const V1_PATH := "user://keystone_save.json"   ## where version 1 kept its single save
+const SLOT_COUNT := 3
+
+
+static func slot_path(slot: int) -> String:
+	return DEFAULT_PATH if slot <= 0 else "%s/slot_%d.json" % [SAVE_DIR, slot]
+
+
+static func ensure_dir() -> void:
+	if not DirAccess.dir_exists_absolute(SAVE_DIR):
+		DirAccess.make_dir_recursive_absolute(SAVE_DIR)
+
+
+## One-time migration of the version-1 single save into the autosave slot. Returns true if done.
+static func migrate_v1_file() -> bool:
+	if FileAccess.file_exists(DEFAULT_PATH) or not FileAccess.file_exists(V1_PATH):
+		return false
+	var res := load_game(V1_PATH)
+	if res.is_empty():
+		return false
+	var meta: Dictionary = res["meta"]
+	meta["speed"] = migrate_speed(int(meta.get("speed", 1)), 1)
+	meta["saved_at"] = res["saved_at"]
+	ensure_dir()
+	if save_game(res["sim"], DEFAULT_PATH, meta) != OK:
+		return false
+	delete_all(V1_PATH)
+	return true
+
+
+## v1 speeds were PAUSED/NORMAL/FAST(4x); v2 adds 2x: PAUSED/X1/X2/X4.
+static func migrate_speed(speed: int, from_version: int) -> int:
+	if from_version <= 1 and speed == 2:
+		return 3
+	return speed
 
 
 static func to_dict(sim: Simulation, meta: Dictionary = {}) -> Dictionary:
@@ -54,6 +90,8 @@ static func from_dict(d: Dictionary) -> Simulation:
 	var arrays: Dictionary = wd.get("arrays", {})
 	for f in WorldState.ARRAY_FIELDS:
 		if not arrays.has(f):
+			if ver == 1 and f in WorldState.V2_ARRAYS:
+				continue # migrated: keep WorldState's defaults
 			return null
 		var raw := Marshalls.base64_to_raw(str(arrays[f]))
 		if WorldState.ARRAY_FIELDS[f] != TYPE_PACKED_BYTE_ARRAY and raw.size() % 4 != 0:
@@ -70,6 +108,9 @@ static func from_dict(d: Dictionary) -> Simulation:
 	var scalars: Dictionary = wd.get("scalars", {})
 	for f in WorldState.SCALAR_FIELDS:
 		if not scalars.has(f):
+			if ver == 1 and WorldState.V2_SCALAR_DEFAULTS.has(f):
+				ws.set(f, WorldState.V2_SCALAR_DEFAULTS[f])
+				continue
 			return null
 		var cur: Variant = ws.get(f)
 		match typeof(cur):
@@ -91,11 +132,16 @@ static func from_dict(d: Dictionary) -> Simulation:
 	var sc = d.get("scenario")
 	if sc is Dictionary:
 		sim.scenario = Scenario.from_dict(sc)
+	if ver == 1:
+		ws.peak_villagers = ws.villagers
+	sim.update_derived()
 	return sim
 
 
 ## Atomic save. Returns OK or an error code; never leaves a half-written main file.
 static func save_game(sim: Simulation, path: String = DEFAULT_PATH, meta: Dictionary = {}) -> Error:
+	if path.begins_with(SAVE_DIR):
+		ensure_dir()
 	var text := JSON.stringify(to_dict(sim, meta), "", false, true)
 	var tmp := path + ".tmp"
 	var f := FileAccess.open(tmp, FileAccess.WRITE)
@@ -126,7 +172,7 @@ static func read_dict(path: String) -> Dictionary:
 	if json.parse(text) != OK: # quiet: a torn file is an expected case, not an engine error
 		return {}
 	var parsed: Variant = json.data
-	if parsed is Dictionary and int(parsed.get("version", -1)) >= 1:
+	if parsed is Dictionary and int(parsed.get("version", -1)) >= 1 and int(parsed.get("version", -1)) <= VERSION:
 		return parsed
 	return {}
 
@@ -142,7 +188,10 @@ static func load_game(path: String = DEFAULT_PATH) -> Dictionary:
 		if sim == null:
 			continue
 		var meta: Dictionary = d.get("meta", {})
-		return {"sim": sim, "saved_at": float(d.get("saved_at", 0.0)), "meta": meta, "source": p}
+		var ver := int(d.get("version", VERSION))
+		if meta.has("speed"):
+			meta["speed"] = migrate_speed(int(meta["speed"]), ver)
+		return {"sim": sim, "saved_at": float(d.get("saved_at", 0.0)), "meta": meta, "source": p, "version": ver}
 	return {}
 
 
@@ -150,3 +199,28 @@ static func delete_all(path: String = DEFAULT_PATH) -> void:
 	for p in [path, path + ".tmp", path + ".bak"]:
 		if FileAccess.file_exists(p):
 			DirAccess.remove_absolute(p)
+
+
+## Lightweight slot info for the Save/Load screen (no simulation rebuild). {} if empty.
+static func slot_info(path: String) -> Dictionary:
+	var d := read_dict(path)
+	if d.is_empty():
+		d = read_dict(path + ".bak")
+	if d.is_empty():
+		return {}
+	var meta: Dictionary = d.get("meta", {})
+	var wd: Dictionary = d.get("world", {})
+	var sc = d.get("scenario")
+	var sid := str(sc.get("id", "")) if sc is Dictionary else ""
+	if sid == Scenario.V1_TUTORIAL_ID:
+		sid = Scenario.TUTORIAL_ID
+	var def := ScenarioCatalog.get_def(sid)
+	return {
+		"saved_at": float(d.get("saved_at", 0.0)),
+		"title": str(meta.get("title", def.get("title", "Island"))),
+		"day": int(meta.get("day", 0)),
+		"villagers": int(meta.get("villagers", 0)),
+		"keystone": int(meta.get("keystone", 0)),
+		"size": int(wd.get("width", 0)),
+		"version": int(d.get("version", 0)),
+	}

@@ -20,7 +20,7 @@ func _busy_sim(world_seed: int = 4242) -> Simulation:
 			sim.apply_action(Simulation.Action.BUILD_FARM, c.x + dx, c.y + dy)
 	for y in range(0, 12):
 		for x in range(0, 12):
-			sim.apply_action(Simulation.Action.CLEAR_TREES, x, y)
+			if sim.world.land_type[sim.world.index(x, y)] == LandType.FOREST: sim.apply_action(Simulation.Action.CLEAR_TREES, x, y)
 	sim.scenario = Scenario.tutorial()
 	sim.run(57)
 	return sim
@@ -121,9 +121,10 @@ func test_killed_app_restore_then_catch_up_matches() -> void:
 
 func test_away_summary_from_event_log() -> void:
 	var sim := Simulation.create(12345, 32)
+	sim.world.free_build = true
 	for y in 32:
 		for x in 32:
-			sim.apply_action(Simulation.Action.CLEAR_TREES, x, y)
+			if sim.world.land_type[sim.world.index(x, y)] == LandType.FOREST: sim.apply_action(Simulation.Action.CLEAR_TREES, x, y)
 	var cu := CatchUp.new()
 	cu.begin(sim, 120)
 	cu.run_all()

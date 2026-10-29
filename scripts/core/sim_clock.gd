@@ -5,8 +5,10 @@ extends Node
 
 signal ticked(count: int)
 
-enum Speed { PAUSED, NORMAL, FAST }
-const TICKS_PER_SECOND := [0.0, 2.0, 8.0]
+## NORMAL = 1x, X2 = 2x, FAST = 4x. (v1 saves stored FAST as 2; SaveSystem.migrate_speed maps it.)
+enum Speed { PAUSED, NORMAL, X2, FAST }
+const TICKS_PER_SECOND := [0.0, 2.0, 4.0, 8.0]
+const SPEED_LABELS := ["Pause", "1x", "2x", "4x"]
 const MAX_TICKS_PER_FRAME := 8
 
 var sim: Simulation

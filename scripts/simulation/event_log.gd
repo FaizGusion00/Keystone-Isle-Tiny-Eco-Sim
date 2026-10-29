@@ -13,6 +13,10 @@ enum Type {
 	FISH_DECLINE, HERBIVORE_DECLINE, CROP_FAILURE,     # living things (M4)
 	FOOD_SHORTAGE, WATER_SHORTAGE, POPULATION_GROWTH, POPULATION_LOSS, # settlement (M4)
 	DROUGHT_ENDED,
+	# --- v2 (M6): appended only, so ids stored in v1 saves keep their meaning ---
+	LAND_CLEARED, HOUSE_BUILT, DAM_BUILT, LAND_RESTORED, STRUCTURE_REMOVED, # player actions
+	DRY_SEASON, WET_SEASON,                            # seasons (roots)
+	WILDFIRE, FIRE_OUT, FLOOD, HOUSING_FULL, HARVEST_LOST,
 }
 
 const TYPE_NAMES := {
@@ -33,6 +37,18 @@ const TYPE_NAMES := {
 	Type.POPULATION_GROWTH: "Village grew",
 	Type.POPULATION_LOSS: "Villagers left",
 	Type.DROUGHT_ENDED: "Drought ended",
+	Type.LAND_CLEARED: "Land cleared",
+	Type.HOUSE_BUILT: "House built",
+	Type.DAM_BUILT: "Dam built",
+	Type.LAND_RESTORED: "Land restored",
+	Type.STRUCTURE_REMOVED: "Building removed",
+	Type.DRY_SEASON: "Dry season began",
+	Type.WET_SEASON: "Wet season began",
+	Type.WILDFIRE: "Wildfire",
+	Type.FIRE_OUT: "Fire burned out",
+	Type.FLOOD: "Flood",
+	Type.HOUSING_FULL: "Village out of homes",
+	Type.HARVEST_LOST: "Harvest lost",
 }
 
 ## Types that start a causal chain by definition (player actions, weather, recoveries).
@@ -44,7 +60,47 @@ const ROOT_KIND := {
 	Type.DROUGHT: "weather",
 	Type.DROUGHT_ENDED: "weather",
 	Type.POPULATION_GROWTH: "plenty of food and water",
+	Type.LAND_CLEARED: "your action",
+	Type.HOUSE_BUILT: "your action",
+	Type.DAM_BUILT: "your action",
+	Type.LAND_RESTORED: "your action",
+	Type.STRUCTURE_REMOVED: "your action",
+	Type.DRY_SEASON: "the turning of the seasons",
+	Type.WET_SEASON: "the turning of the seasons",
+	Type.HOUSING_FULL: "every home being full - build houses",
 }
+
+## Category of each type, used by the UI for icons/colours and history filters.
+enum Kind { ACTION, WEATHER, LAND, LIFE, VILLAGE, HAZARD }
+const TYPE_KIND := {
+	Type.TREES_CLEARED: Kind.ACTION, Type.TREES_PLANTED: Kind.ACTION, Type.FARM_BUILT: Kind.ACTION,
+	Type.LAND_CLEARED: Kind.ACTION, Type.HOUSE_BUILT: Kind.ACTION, Type.DAM_BUILT: Kind.ACTION,
+	Type.LAND_RESTORED: Kind.ACTION, Type.STRUCTURE_REMOVED: Kind.ACTION,
+	Type.HEAVY_RAIN: Kind.WEATHER, Type.DROUGHT: Kind.WEATHER, Type.DROUGHT_ENDED: Kind.WEATHER,
+	Type.DRY_SEASON: Kind.WEATHER, Type.WET_SEASON: Kind.WEATHER,
+	Type.EROSION: Kind.LAND, Type.MUDDY_WATER: Kind.LAND, Type.WATER_CLEARED: Kind.LAND,
+	Type.FISH_DECLINE: Kind.LIFE, Type.HERBIVORE_DECLINE: Kind.LIFE, Type.CROP_FAILURE: Kind.LIFE,
+	Type.HARVEST_LOST: Kind.LIFE,
+	Type.FOOD_SHORTAGE: Kind.VILLAGE, Type.WATER_SHORTAGE: Kind.VILLAGE,
+	Type.POPULATION_GROWTH: Kind.VILLAGE, Type.POPULATION_LOSS: Kind.VILLAGE, Type.HOUSING_FULL: Kind.VILLAGE,
+	Type.WILDFIRE: Kind.HAZARD, Type.FIRE_OUT: Kind.HAZARD, Type.FLOOD: Kind.HAZARD,
+}
+
+## Events worth a toast when they happen (bad news and milestones; not routine actions).
+const NOTABLE := [Type.HEAVY_RAIN, Type.DROUGHT, Type.DROUGHT_ENDED, Type.DRY_SEASON, Type.WET_SEASON,
+	Type.MUDDY_WATER, Type.WATER_CLEARED, Type.FISH_DECLINE, Type.HERBIVORE_DECLINE, Type.CROP_FAILURE,
+	Type.FOOD_SHORTAGE, Type.WATER_SHORTAGE, Type.POPULATION_GROWTH, Type.POPULATION_LOSS,
+	Type.WILDFIRE, Type.FIRE_OUT, Type.FLOOD, Type.HOUSING_FULL, Type.HARVEST_LOST]
+
+
+static func kind_of_type(t: int) -> int:
+	return TYPE_KIND.get(t, Kind.LAND)
+
+
+static func is_bad(t: int) -> bool:
+	return t in [Type.DROUGHT, Type.EROSION, Type.MUDDY_WATER, Type.FISH_DECLINE, Type.HERBIVORE_DECLINE,
+		Type.CROP_FAILURE, Type.FOOD_SHORTAGE, Type.WATER_SHORTAGE, Type.POPULATION_LOSS, Type.WILDFIRE,
+		Type.FLOOD, Type.HOUSING_FULL, Type.HARVEST_LOST]
 
 const CAPACITY := 512
 const MAX_CAUSES := 3
@@ -159,6 +215,12 @@ func describe(id: int) -> String:
 		Type.FISH_DECLINE, Type.HERBIVORE_DECLINE: s += " (now %d)" % int(v)
 		Type.FOOD_SHORTAGE, Type.WATER_SHORTAGE: s += " (%.0f%% of need met)" % (v * 100.0)
 		Type.POPULATION_GROWTH, Type.POPULATION_LOSS: s += " (now %d villagers)" % int(v)
+		Type.FIRE_OUT: s += " (%d tiles burned)" % int(v)
+		Type.FLOOD: s += " (%.0f cm deep)" % (v * 100.0)
+		Type.LAND_CLEARED, Type.TREES_CLEARED:
+			if v > 0.0:
+				s += " (+%d wood)" % int(v)
+		Type.HOUSING_FULL: s += " (all %d places taken)" % int(v)
 	return s
 
 

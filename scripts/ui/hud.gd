@@ -11,8 +11,8 @@ signal overlay_requested
 signal events_requested
 signal why_requested(event_id: int)
 
-enum Tool { INSPECT, CLEAR_TREES, PLANT_TREES, BUILD_FARM }
-const TOOL_LABELS := ["Inspect", "Clear trees", "Plant trees", "Build farm"]
+enum Tool { INSPECT, CLEAR_TREES, PLANT_TREES, BUILD_FARM, BUILD_HOUSE, BUILD_DAM, RESTORE_LAND, DEMOLISH }
+const TOOL_LABELS := ["Inspect", "Clear", "Plant", "Farm", "House", "Dam", "Restore", "Remove"]
 
 var root: Control
 var _seed_label: Label
@@ -61,7 +61,7 @@ func _build_top_bar() -> void:
 	spacer.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	row.add_child(spacer)
 	var group := ButtonGroup.new()
-	for s in [["Pause", SimClock.Speed.PAUSED], ["1x", SimClock.Speed.NORMAL], ["4x", SimClock.Speed.FAST]]:
+	for s in [["Pause", SimClock.Speed.PAUSED], ["1x", SimClock.Speed.NORMAL], ["2x", SimClock.Speed.X2], ["4x", SimClock.Speed.FAST]]:
 		var b := UiKit.button(s[0], Vector2(84, 60))
 		b.toggle_mode = true
 		b.button_group = group
@@ -226,7 +226,7 @@ func _build_tool_bar() -> void:
 	bar.add_child(row)
 	var group := ButtonGroup.new()
 	for t in TOOL_LABELS.size():
-		var b := UiKit.button(TOOL_LABELS[t], Vector2(150, 64))
+		var b := UiKit.button(TOOL_LABELS[t], Vector2(104, 64))
 		b.toggle_mode = true
 		b.button_group = group
 		b.button_pressed = t == Tool.INSPECT

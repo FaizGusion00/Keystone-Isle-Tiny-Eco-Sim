@@ -27,11 +27,6 @@ var _suspended_at := 0.0
 var _ticks_since_save := 0
 var _scenario_status := -1
 
-## Event types worth a toast when they happen.
-const NOTABLE := [EventLog.Type.MUDDY_WATER, EventLog.Type.WATER_CLEARED, EventLog.Type.DROUGHT,
-	EventLog.Type.DROUGHT_ENDED, EventLog.Type.FISH_DECLINE, EventLog.Type.HERBIVORE_DECLINE,
-	EventLog.Type.CROP_FAILURE, EventLog.Type.FOOD_SHORTAGE, EventLog.Type.WATER_SHORTAGE,
-	EventLog.Type.POPULATION_GROWTH, EventLog.Type.POPULATION_LOSS]
 
 
 func _ready() -> void:
@@ -45,6 +40,8 @@ func _ready() -> void:
 	hud.tutorial_requested.connect(start_tutorial)
 	var args := OS.get_cmdline_user_args()
 	persistence = args.is_empty() or args.has("--restore")
+	if persistence:
+		SaveSystem.migrate_v1_file()
 	set_speed(SimClock.Speed.NORMAL)
 	if not (persistence and restore_from_disk()):
 		if persistence or args.has("--tutorial"):
@@ -124,6 +121,10 @@ func _action_for_tool(t: int) -> int:
 		Hud.Tool.CLEAR_TREES: return Simulation.Action.CLEAR_TREES
 		Hud.Tool.PLANT_TREES: return Simulation.Action.PLANT_TREES
 		Hud.Tool.BUILD_FARM: return Simulation.Action.BUILD_FARM
+		Hud.Tool.BUILD_HOUSE: return Simulation.Action.BUILD_HOUSE
+		Hud.Tool.BUILD_DAM: return Simulation.Action.BUILD_DAM
+		Hud.Tool.RESTORE_LAND: return Simulation.Action.RESTORE_LAND
+		Hud.Tool.DEMOLISH: return Simulation.Action.DEMOLISH
 	return Simulation.Action.NONE
 
 
@@ -136,7 +137,7 @@ func cycle_overlay() -> void:
 func _toast_new_events() -> void:
 	var newest := -1
 	for id in range(maxi(_seen_event_id, sim.events.next_id - EventLog.CAPACITY), sim.events.next_id):
-		if sim.events.type_of(id) in NOTABLE:
+		if sim.events.type_of(id) in EventLog.NOTABLE:
 			newest = id
 	_seen_event_id = sim.events.next_id
 	if newest >= 0:

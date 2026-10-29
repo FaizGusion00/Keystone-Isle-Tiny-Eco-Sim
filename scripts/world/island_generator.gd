@@ -9,8 +9,18 @@ const BEACH_MAX := 0.31
 const LOWLAND_MAX := 0.50
 const GRASS_MAX := 0.76
 
+## Biome presets (New World setup). TEMPERATE reproduces the original generator exactly.
+enum Preset { TEMPERATE, LUSH, ARID, HIGHLANDS }
+const PRESET_NAMES := ["Temperate", "Lush", "Arid", "Highlands"]
+const PRESET_BLURBS := [
+	"Balanced forests, meadows and a gentle rain cycle.",
+	"Wet and green: dense forest, rich soil, plenty of rain.",
+	"Dry grassland with few trees. Water is precious and fire is a danger.",
+	"Taller, steeper island with fast streams. Good dam sites, more erosion.",
+]
 
-static func generate(world_seed: int, w: int = 32, h: int = 32) -> WorldState:
+
+static func generate(world_seed: int, w: int = 32, h: int = 32, preset: int = Preset.TEMPERATE) -> WorldState:
 	var ws := WorldState.new(w, h, world_seed)
 	var rng := RandomNumberGenerator.new()
 	rng.seed = world_seed
@@ -42,6 +52,10 @@ static func generate(world_seed: int, w: int = 32, h: int = 32) -> WorldState:
 			var n := shape.get_noise_2d(x + ox, y + oy) * 0.5 + 0.5
 			var e := clampf(falloff * (0.45 + 0.65 * n) - 0.04, 0.0, 1.0)
 			var m := clampf(wet.get_noise_2d(x + ox, y + oy) * 0.5 + 0.5, 0.0, 1.0)
+			match preset:
+				Preset.LUSH: m = clampf(m + 0.12, 0.0, 1.0)
+				Preset.ARID: m = clampf(m - 0.18, 0.0, 1.0)
+				Preset.HIGHLANDS: e = clampf(e * 1.18 + 0.02 * falloff, 0.0, 1.0)
 			ws.elevation[i] = e
 			var t: int
 			if e < DEEP_MAX:

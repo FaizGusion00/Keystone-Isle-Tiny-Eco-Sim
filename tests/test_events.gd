@@ -6,7 +6,7 @@ func _clear_all_forest(sim: Simulation) -> PackedInt32Array:
 	var ids := PackedInt32Array()
 	for y in sim.world.height:
 		for x in sim.world.width:
-			if sim.apply_action(Simulation.Action.CLEAR_TREES, x, y):
+			if sim.world.land_type[sim.world.index(x, y)] == LandType.FOREST and sim.apply_action(Simulation.Action.CLEAR_TREES, x, y):
 				ids.append(sim.events.next_id - 1)
 	return ids
 
@@ -47,6 +47,7 @@ func test_explain_only_uses_recorded_causes() -> void:
 
 func test_clearing_trees_records_action_and_links_erosion() -> void:
 	var sim := Simulation.create(12345, 32)
+	sim.world.free_build = true
 	var cut_ids := _clear_all_forest(sim)
 	assert_true(cut_ids.size() > 20)
 	assert_eq(sim.events.type_of(cut_ids[0]), EventLog.Type.TREES_CLEARED)
@@ -81,6 +82,7 @@ func test_muddy_coast_needs_clearing_and_is_explained() -> void:
 	var base := Simulation.create(12345, 32)
 	base.run(240)
 	var cleared := Simulation.create(12345, 32)
+	cleared.world.free_build = true
 	_clear_all_forest(cleared)
 	cleared.run(240)
 	var base_muddy := 0
