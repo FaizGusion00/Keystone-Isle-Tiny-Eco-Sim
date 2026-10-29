@@ -194,7 +194,7 @@ func _layout(sz: Vector2) -> void:
 			else:
 				tool_bar_row.add_child(btn)
 	_tool_sep.visible = not want_side
-	_side.visible = want_side
+	_side.visible = want_side and not events_panel.visible
 	_tool_scroll.custom_minimum_size = Vector2(0, 0)
 	var tb_min := tool_bar_row.get_combined_minimum_size()
 	var tb_w := minf(tb_min.x + 4.0, w - 16.0)
@@ -224,11 +224,6 @@ func _layout(sz: Vector2) -> void:
 	_chips_flow.reset_size()
 	var chips_h := _chips_flow.get_combined_minimum_size().y
 	var top_bottom := maxf(chips_y + chips_h, t + maxf(_day_card.size.y, _speed_card.size.y)) + 10.0
-	# --- toasts under the top row
-	_toasts.position = Vector2(l + w * 0.5 - _toasts.size.x * 0.5, top_bottom + 4.0)
-	_toasts.custom_minimum_size.x = minf(520.0, w)
-	_toasts.size.x = _toasts.custom_minimum_size.x
-	_toasts.position.x = l + (w - _toasts.size.x) * 0.5
 	# --- objectives card (top-left below)
 	var obj_w := minf(340.0, w) if not portrait else w
 	_obj_card.custom_minimum_size = Vector2(obj_w, 0)
@@ -262,6 +257,20 @@ func _layout(sz: Vector2) -> void:
 	events_panel.position = Vector2(hx, hy)
 	events_panel.custom_minimum_size = Vector2(hw, 0)
 	events_panel.size = Vector2(hw, maxf(240.0, bottom_y - hy))
+	# --- toasts under the top row, centred in whatever space the side panels leave free
+	var tl := l
+	var tr := r
+	if not portrait:
+		if events_panel.visible:
+			tl = hx + hw + 12.0
+		if _inspector.visible:
+			tr = _inspector.position.x - 12.0
+	var tw := minf(520.0, maxf(200.0, tr - tl))
+	_toasts.custom_minimum_size.x = tw
+	_toasts.size.x = tw
+	# a phone-portrait history drawer already lists every event, so toasts stay out of its way
+	_toasts.visible = not (portrait and events_panel.visible)
+	_toasts.position = Vector2(tl + (tr - tl - tw) * 0.5, top_bottom + 4.0)
 	# --- popup + scrim
 	_scrim.position = Vector2.ZERO
 	_scrim.size = sz
@@ -709,6 +718,7 @@ func _slide_in(c: Control) -> void:
 func _slide_out(c: Control) -> void:
 	if reduce_motion or UiKit.reduce_motion or not c.is_inside_tree():
 		c.visible = false
+		relayout()
 		return
 	var tw := c.create_tween()
 	tw.tween_property(c, "modulate:a", 0.0, 0.14)
@@ -936,8 +946,7 @@ func _build_events_panel() -> void:
 	why_head.add_child(UiKit.label("Why it happened", 0, "Subheading"))
 	col.add_child(why_head)
 	_chain_scroll = ScrollContainer.new()
-	_chain_scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
-	_chain_scroll.size_flags_stretch_ratio = 1.15
+	_chain_scroll.size_flags_vertical = Control.SIZE_FILL  # sized to its chain by _fit_chain
 	_chain_scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
 	col.add_child(_chain_scroll)
 	_chain = UiKit.vbox(0)
@@ -1012,8 +1021,19 @@ func _set_chain_placeholder() -> void:
 		_chain.remove_child(c)
 		c.queue_free()
 	var p := UiKit.card("Inset")
-	p.add_child(UiKit.wrap_label("Tap an event above to trace its causes - every link is something the simulation actually recorded.", "Caption"))
+	p.add_child(UiKit.wrap_label("Tap an event above to trace its causes - every link is something the simulation actually recorded.", "Caption", maxf(120.0, events_panel.size.x - 80.0)))
 	_chain.add_child(p)
+	_fit_chain.call_deferred()
+
+
+## The why-chain takes the height it needs (up to ~60% of the drawer); the list gets the rest.
+func _fit_chain(again: bool = true) -> void:
+	if not is_instance_valid(_chain_scroll):
+		return
+	var cap := maxf(120.0, events_panel.size.y * 0.6)
+	_chain_scroll.custom_minimum_size.y = minf(_chain.get_combined_minimum_size().y, cap)
+	if again:
+		_fit_chain.call_deferred(false)
 
 
 func show_explanation(id: int) -> void:
@@ -1064,7 +1084,7 @@ func show_explanation(id: int) -> void:
 		var kind := EventLog.kind_of_type(ev_type)
 		var colr: Color = UiKit.CORAL if EventLog.is_bad(ev_type) else KIND_COLORS[kind]
 		crow.add_child(UiKit.icon_badge(KIND_ICONS[kind], Color(colr, 0.16), colr, 32))
-		var tl := UiKit.wrap_label(text, "")
+		var tl := UiKit.wrap_label(text, "", maxf(120.0, events_panel.size.x - indent - 110.0))
 		tl.add_theme_font_size_override("font_size", 16 if k > 0 else 17)
 		if k == 0:
 			tl.add_theme_font_override("font", UiKit.font(false, 650))
@@ -1077,6 +1097,7 @@ func show_explanation(id: int) -> void:
 			var tw := cm.create_tween()
 			tw.tween_property(cm, "modulate:a", 1.0, 0.18).set_delay(0.04 * k)
 		k += 1
+	_fit_chain.call_deferred()
 
 
 func _type_from_text(text: String) -> int:
@@ -1100,6 +1121,7 @@ func hide_events() -> void:
 	if events_panel.visible:
 		AudioDirector.sfx("ui_close", 1.0, -6.0)
 	events_panel.visible = false
+	relayout()
 
 
 # ================================================================== toasts

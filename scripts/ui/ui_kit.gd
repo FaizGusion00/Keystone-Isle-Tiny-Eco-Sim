@@ -72,9 +72,11 @@ static func box(bg: Color, radius: int = RADIUS, margin: float = 14.0, border: C
 static func _button_styles(t: Theme, type: String, normal: Color, hover: Color, pressed: Color,
 		fg: Color, fg_pressed: Color, border: Color = LINE, radius: int = 14, shadow: int = 3) -> void:
 	t.set_stylebox("normal", type, box(normal, radius, 12, border, shadow))
-	t.set_stylebox("hover", type, box(hover, radius, 12, border, shadow + 2))
-	t.set_stylebox("pressed", type, box(pressed, radius, 12, border, 1))
-	t.set_stylebox("hover_pressed", type, box(pressed.lightened(0.06), radius, 12, border, 2))
+	t.set_stylebox("hover", type, box(hover, radius, 12, border, shadow + 2 if hover.a >= 0.6 else 0))
+	# translucent (ghost) fills must not get a shadow: it shows through and looks muddy
+	var ps := 0 if pressed.a < 0.6 else 1
+	t.set_stylebox("pressed", type, box(pressed, radius, 12, border, ps))
+	t.set_stylebox("hover_pressed", type, box(Color(pressed.lightened(0.06), pressed.a), radius, 12, border, ps * 2))
 	t.set_stylebox("disabled", type, box(Color(normal, normal.a * 0.55), radius, 12, Color(border, border.a * 0.5), 0))
 	t.set_stylebox("focus", type, box(Color(0, 0, 0, 0), radius, 12, Color(TEAL, 0.7), 0, 2))
 	t.set_color("font_color", type, fg)
