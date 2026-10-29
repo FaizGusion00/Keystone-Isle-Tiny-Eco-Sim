@@ -19,6 +19,11 @@ var _touches := {}
 var _touch_dragged := false
 var _pinch_dist := 0.0
 var _pinch_zoom := 1.0
+var input_enabled := true      ## false while a full-screen menu is open
+var smooth := true             ## eased wheel/key zoom and glides (off with reduce motion)
+var _zoom_target := 0.0        ## 0 = no zoom animation running
+var _zoom_anchor := Vector2.ZERO
+var _glide_to := Vector2.INF
 
 
 func set_bounds(r: Rect2) -> void:
@@ -37,7 +42,50 @@ func fit_to(r: Rect2) -> void:
 	zoom = Vector2(z, z)
 
 
+## Eases the camera to a world position (and optionally a zoom level).
+func glide_to(world_pos: Vector2, z := 0.0) -> void:
+	if not smooth:
+		position = world_pos
+		if z > 0.0:
+			zoom = Vector2(z, z)
+		_clamp()
+		return
+	_glide_to = world_pos
+	if z > 0.0:
+		_zoom_target = clampf(z, MIN_ZOOM, MAX_ZOOM)
+		_zoom_anchor = Vector2.INF
+
+
+## Eased zoom toward screen_pos (wheel / keys). Falls back to zoom_at without smoothing.
+func zoom_smooth(screen_pos: Vector2, factor: float) -> void:
+	if not smooth:
+		zoom_at(screen_pos, factor)
+		return
+	var base := _zoom_target if _zoom_target > 0.0 else zoom.x
+	_zoom_target = clampf(base * factor, MIN_ZOOM, MAX_ZOOM)
+	_zoom_anchor = screen_pos
+
+
 func _process(delta: float) -> void:
+	if _zoom_target > 0.0:
+		var k := 1.0 - exp(-14.0 * delta)
+		var nz := lerpf(zoom.x, _zoom_target, k)
+		if absf(nz - _zoom_target) < 0.002:
+			nz = _zoom_target
+		if _zoom_anchor == Vector2.INF:
+			zoom = Vector2(nz, nz)
+		else:
+			zoom_at(_zoom_anchor, nz / zoom.x)
+		if nz == _zoom_target:
+			_zoom_target = 0.0
+	if _glide_to != Vector2.INF:
+		position = position.lerp(_glide_to, 1.0 - exp(-6.0 * delta))
+		if position.distance_to(_glide_to) < 0.5:
+			position = _glide_to
+			_glide_to = Vector2.INF
+		_clamp()
+	if not input_enabled:
+		return
 	var dir := Input.get_vector("ui_left", "ui_right", "ui_up", "ui_down")
 	if dir != Vector2.ZERO:
 		position += dir * KEY_PAN_SPEED * delta / zoom.x
@@ -45,14 +93,18 @@ func _process(delta: float) -> void:
 
 
 func _unhandled_input(event: InputEvent) -> void:
+	if not input_enabled:
+		return
+	if event is InputEventMouseButton or event is InputEventScreenDrag:
+		_glide_to = Vector2.INF
 	if event is InputEventMouseButton:
 		if event.device == InputEvent.DEVICE_ID_EMULATION:
 			return # touch is handled via ScreenTouch/ScreenDrag
 		var mb := event as InputEventMouseButton
 		if mb.pressed and mb.button_index == MOUSE_BUTTON_WHEEL_UP:
-			zoom_at(mb.position, 1.12)
+			zoom_smooth(mb.position, 1.12)
 		elif mb.pressed and mb.button_index == MOUSE_BUTTON_WHEEL_DOWN:
-			zoom_at(mb.position, 1.0 / 1.12)
+			zoom_smooth(mb.position, 1.0 / 1.12)
 		elif mb.button_index in [MOUSE_BUTTON_LEFT, MOUSE_BUTTON_RIGHT, MOUSE_BUTTON_MIDDLE]:
 			if mb.pressed:
 				_mouse_down = true
@@ -100,14 +152,15 @@ func _unhandled_input(event: InputEvent) -> void:
 			var pts: Array = _touches.values()
 			var a: Vector2 = pts[0]
 			var b: Vector2 = pts[1]
+			_zoom_target = 0.0
 			var target := clampf(_pinch_zoom * a.distance_to(b) / _pinch_dist, MIN_ZOOM, MAX_ZOOM)
 			zoom_at((a + b) * 0.5, target / zoom.x)
 	elif event is InputEventKey and event.pressed:
 		var k := event as InputEventKey
 		if k.keycode in [KEY_EQUAL, KEY_PLUS, KEY_KP_ADD]:
-			zoom_at(get_viewport_rect().size * 0.5, 1.15)
+			zoom_smooth(get_viewport_rect().size * 0.5, 1.15)
 		elif k.keycode in [KEY_MINUS, KEY_KP_SUBTRACT]:
-			zoom_at(get_viewport_rect().size * 0.5, 1.0 / 1.15)
+			zoom_smooth(get_viewport_rect().size * 0.5, 1.0 / 1.15)
 
 
 func _start_pinch() -> void:

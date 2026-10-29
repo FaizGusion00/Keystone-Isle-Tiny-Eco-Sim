@@ -69,8 +69,11 @@ static func handle_cmdline(main: Node) -> void:
 			fc = Vector2i(int(fp[0]), int(fp[1]))
 		main.camera.position = main.world_view.position + main.world_view.top_center(fc.x, fc.y)
 	if args.has("select"):
-		var p: PackedStringArray = String(args["select"]).split(",")
-		main.select_tile(Vector2i(int(p[0]), int(p[1])))
+		var st: Vector2i = main.sim.world.coords(main.sim.world.settlement_index)
+		if String(args["select"]) != "village":
+			var p: PackedStringArray = String(args["select"]).split(",")
+			st = Vector2i(int(p[0]), int(p[1]))
+		main.select_tile(st)
 	if args.has("screenshot"):
 		_screenshot(main, String(args["screenshot"]), int(args.get("frames", "30")))
 

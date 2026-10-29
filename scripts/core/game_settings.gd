@@ -4,7 +4,7 @@ extends RefCounted
 
 const PATH := "user://settings.cfg"
 const DEFAULTS := {
-	"master_volume": 0.8, "music_volume": 0.6, "sfx_volume": 0.8,
+	"master_volume": 0.8, "music_volume": 0.6, "sfx_volume": 0.8, "ambience_volume": 0.7,
 	"ui_scale": 1.0, "reduce_motion": false, "colorblind": false, "haptics": true,
 	"language": "en", "show_tutorial": true,
 }
@@ -43,7 +43,7 @@ func set_value(key: String, v) -> void:
 
 ## Linear 0..1 volume to dB for a bus (creates nothing; missing buses are skipped).
 func apply_audio() -> void:
-	for pair in [["Master", "master_volume"], ["Music", "music_volume"], ["SFX", "sfx_volume"]]:
+	for pair in [["Master", "master_volume"], ["Music", "music_volume"], ["SFX", "sfx_volume"], ["Ambience", "ambience_volume"]]:
 		var idx := AudioServer.get_bus_index(pair[0])
 		if idx < 0:
 			continue
