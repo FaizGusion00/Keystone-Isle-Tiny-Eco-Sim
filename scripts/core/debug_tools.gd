@@ -131,4 +131,4 @@ static func _screenshot(main: Node, path: String, frames: int) -> void:
 	var img := main.get_viewport().get_texture().get_image()
 	var err := img.save_png(path)
 	print("screenshot saved: ", path, " err=", err)
-	main.quit_game()
+	main.quit_game(1.0) # screenshot runs share a loaded CPU: settle longer for clean logs

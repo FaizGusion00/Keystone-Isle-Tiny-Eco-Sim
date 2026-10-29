@@ -265,6 +265,20 @@ func test_scored_results_banner_prestige_and_sandbox_rare_events() -> void:
 	assert_eq(main.world_view.banner_color, Color.html("e0765a"), "level banners stay unlocked after prestige")
 	main.screens.open("journal", {}, false)
 	main.screens.open("modes", {}, false)
+	# a finished scored run reaches the platform seam (offline: recorded only) and the bests
+	var id := ScenarioCatalog.daily_id({"year": 2026, "month": 10, "day": 29})
+	main.screens.close()
+	main.start_scenario(id)
+	main.sim.run(30)
+	main.sim.scenario.status = Scenario.Status.FAILED
+	main._check_scenario()
+	var submitted := false
+	for c in (main.services as OfflinePlatformServices).calls:
+		if c[0] == "submit_score" and c[1][0] == id:
+			submitted = true
+	assert_true(submitted, str((main.services as OfflinePlatformServices).calls))
+	assert_false(main.progress.best(id).is_empty())
+	assert_eq(main.screens.current, "results")
 	main.start_sandbox({"seed": 9, "size": 24, "preset": 0, "rare_events": true})
 	assert_true(main.sim.world.rare_events)
 	main.restart_scenario()

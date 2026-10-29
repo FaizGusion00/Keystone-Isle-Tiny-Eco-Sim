@@ -90,4 +90,8 @@ static func validate() -> PackedStringArray:
 	for b in banners():
 		if not Color.html_is_valid(str(b.get("color", ""))):
 			errs.append("banner %s: bad colour" % b.get("id", "?"))
+	for entry in mutators() + species() + rare_events():
+		var ic := str(entry.get("icon", ""))
+		if ic == "" or not ResourceLoader.exists("res://assets/icons/%s.svg" % ic):
+			errs.append("%s: icon '%s' not in assets/icons" % [entry.get("id", entry.get("type", "?")), ic])
 	return errs

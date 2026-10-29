@@ -253,9 +253,10 @@ func merge(o: Progress) -> void:
 	for k in o.bests:
 		var mine := best(k)
 		var theirs: Dictionary = o.bests[k]
+		var medal := maxi(int(theirs.get("medal", 0)), int(mine.get("medal", 0)))
 		if mine.is_empty() or int(theirs.get("score", 0)) > int(mine.get("score", 0)):
 			bests[k] = theirs.duplicate()
-			bests[k]["medal"] = maxi(int(theirs.get("medal", 0)), int(mine.get("medal", 0)))
+		bests[k]["medal"] = medal   # the best medal ever earned survives either way
 	if o.prestige > prestige or (o.prestige == prestige and o.xp > xp):
 		prestige = o.prestige
 		xp = o.xp

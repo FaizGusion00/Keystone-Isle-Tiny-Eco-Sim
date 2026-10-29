@@ -277,6 +277,27 @@ func test_progress_v2_migration_runs_levels_and_merge() -> void:
 	assert_true(pr.bests.has("weekly_20261026"))
 	assert_eq(pr.prestige, 1)
 	assert_eq(pr.codex_events, ["LOCUSTS"])
+	# a lower score never drops an earned medal (e.g. thresholds retuned between devices)
+	var third := Progress.new()
+	third.bests = {"weekly_20261026": {"score": 5, "days": 1, "medal": 2, "at": 7.0}}
+	pr.merge(third)
+	assert_eq(int(pr.best("weekly_20261026")["score"]), 10)
+	assert_eq(int(pr.best("weekly_20261026")["medal"]), 2)
+	# merging is order-independent for the scored fields
+	var a := Progress.new()
+	a.stars = {"living_island": 1}
+	a.xp = 400
+	var b := Progress.new()
+	b.stars = {"living_island": 2}
+	b.prestige = 1
+	var ab := Progress.new()
+	ab.merge(a)
+	ab.merge(b)
+	var ba := Progress.new()
+	ba.merge(b)
+	ba.merge(a)
+	assert_eq(ab.stars, ba.stars)
+	assert_eq([ab.prestige, ab.xp], [ba.prestige, ba.xp])
 	DirAccess.remove_absolute(ProjectSettings.globalize_path(p))
 
 

@@ -42,6 +42,8 @@ var _speed_before_pause := SimClock.Speed.NORMAL
 
 
 func _ready() -> void:
+	# Desktop window close goes through quit_game() so audio is released cleanly first.
+	get_tree().set_auto_accept_quit(false)
 	ambience = Ambience.new()
 	ambience.name = "Ambience"
 	add_child(ambience)
@@ -622,8 +624,7 @@ func _notification(what: int) -> void:
 			suspend()
 		NOTIFICATION_WM_CLOSE_REQUEST:
 			suspend()
-			if AudioDirector.current != null:
-				AudioDirector.current.shutdown()
+			quit_game()
 		NOTIFICATION_APPLICATION_RESUMED, NOTIFICATION_APPLICATION_FOCUS_IN:
 			resume()
 
@@ -694,11 +695,19 @@ func _unhandled_input(event: InputEvent) -> void:
 
 
 ## Clean exit: silence audio first so its playbacks are released before the engine shuts down.
-func quit_game() -> void:
+var _quitting := false
+
+## `settle` = real seconds the audio mixer gets to drop its playbacks (see docs/TDD.md, Clean exit).
+func quit_game(settle := 0.3) -> void:
+	if _quitting:
+		return
+	_quitting = true
 	if AudioDirector.current != null:
 		AudioDirector.current.shutdown()
+	# The mixer thread drops stopped playbacks on its own schedule, so give it real time, not
+	# just frames, before the audio server shuts down (too short only costs an exit warning).
 	await get_tree().process_frame
-	await get_tree().process_frame
+	await get_tree().create_timer(settle, true, false, true).timeout
 	get_tree().quit()
 
 
