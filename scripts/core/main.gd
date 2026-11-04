@@ -461,6 +461,8 @@ func _on_tile_tapped(screen_pos: Vector2) -> void:
 			UiKit.haptic(18)
 			hud.set_status(sim.world)
 			hud.update_objectives(sim)
+			if action == Simulation.Action.BUILD_FARM and sim.world.count_structures(WorldState.Structure.FARM) == 1:
+				hud.toast("Farm built! Its first harvest comes in about %d days." % int(Simulation.CROP_DAYS), 4.0, "wheat")
 			_warn_floodplain(action, t)
 	else:
 		AudioDirector.sfx("ui_click", 1.1, -6.0)

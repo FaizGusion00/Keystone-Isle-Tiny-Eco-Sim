@@ -570,7 +570,8 @@ func _pause(sz: Vector2) -> Control:
 		["Load game", "folder-open", func() -> void: open("load"), ""],
 		["Restart island", "rotate-ccw", func() -> void: main.restart_scenario(), ""],
 		["Settings", "settings", func() -> void: open("settings"), ""],
-		["How to play", "circle-help", func() -> void: main.show_coach(), ""],
+		["How to play", "circle-help", func() -> void: open("help"), ""],
+		["Show tips again", "compass", func() -> void: main.show_coach(), ""],
 		["Main menu", "log-out", func() -> void: main.open_menu(), "Ghost"],
 	]
 	for it in items:

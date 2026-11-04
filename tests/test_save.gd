@@ -81,8 +81,8 @@ func test_rejects_bad_saves() -> void:
 
 
 func test_compute_catch_up_ticks() -> void:
-	assert_eq(CatchUp.compute_ticks(100.0, SimClock.Speed.NORMAL), 200)
-	assert_eq(CatchUp.compute_ticks(10.0, SimClock.Speed.FAST), 80)
+	assert_eq(CatchUp.compute_ticks(100.0, SimClock.Speed.NORMAL), 100)
+	assert_eq(CatchUp.compute_ticks(10.0, SimClock.Speed.FAST), 40)
 	assert_eq(CatchUp.compute_ticks(3600.0, SimClock.Speed.FAST), CatchUp.MAX_TICKS, "capped")
 	assert_eq(CatchUp.compute_ticks(3600.0, SimClock.Speed.PAUSED), 0, "paused never catches up")
 	assert_eq(CatchUp.compute_ticks(-50.0, SimClock.Speed.NORMAL), 0, "clock went backwards")
@@ -111,7 +111,7 @@ func test_killed_app_restore_then_catch_up_matches() -> void:
 	var live := _busy_sim()
 	live.scenario = null
 	SaveSystem.save_game(live, p, {"speed": SimClock.Speed.NORMAL})
-	live.run(60) # what would have happened had the app kept running for 30 s at 1x
+	live.run(30) # what would have happened had the app kept running for 30 s at 1x
 	var restored: Simulation = SaveSystem.load_game(p)["sim"]
 	var cu := CatchUp.new()
 	cu.begin(restored, CatchUp.compute_ticks(30.0, SimClock.Speed.NORMAL))
@@ -184,8 +184,8 @@ func test_app_lifecycle_suspend_resume_and_relaunch() -> void:
 	assert_true(FileAccess.file_exists(p), "autosaved on pause")
 	assert_true(main.clock.blocked)
 	assert_eq(SaveSystem.load_game(p)["sim"].state_checksum(), start_sum)
-	# 50 s pass in the background at 1x → 100 catch-up ticks on resume
-	main._suspended_at -= 50.0
+	# 100 s pass in the background at 1x → 100 catch-up ticks on resume
+	main._suspended_at -= 100.0
 	main._notification(Node.NOTIFICATION_APPLICATION_RESUMED)
 	assert_true(main.catch_up != null and main.catch_up.total == 100, "catch-up scheduled")
 	while main.catch_up != null:
@@ -252,7 +252,7 @@ func test_menu_or_pause_screen_freezes_time_away() -> void:
 	main.suspend()
 	main._suspended_at -= 10.0
 	main.resume()
-	assert_true(main.catch_up != null and main.catch_up.total == 20, "running game catches up")
+	assert_true(main.catch_up != null and main.catch_up.total == 10, "running game catches up")
 	tree.root.remove_child(main)
 	main.free()
 	SaveSystem.delete_all(p)

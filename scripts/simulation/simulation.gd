@@ -96,6 +96,8 @@ const LIFE_CAUSE_WINDOW := 60
 const LABOR_PER_VILLAGER := 0.1   ## labor regenerated per villager per day
 const LABOR_CAP_BASE := 10.0
 const WOOD_PER_FOREST := 4.0      ## wood gained by clearing a forest tile
+const WOOD_MATURE_FROM := 0.60     ## a freshly planted stand (cover ≤ 0.6, grass-level) yields no wood…
+const WOOD_MATURE_AT := 0.80       ## …a grown forest (cover 0.8+, every generated forest) yields the full WOOD_PER_FOREST
 const WOOD_MAX := 99.0
 const HOUSE_RADIUS := 2           ## houses: within this of the village centre, or next to a house
 const DAM_MIN_AREA := 12          ## tiles that must drain through a dam site (a stream)
@@ -1259,6 +1261,13 @@ func can_apply(action: int, x: int, y: int) -> String:
 	return ""
 
 
+## Wood from clearing a forest tile with this cover: young (just planted) forest gives nothing,
+## so planting then clearing the same tile is not a free wood source.
+static func wood_yield(cover: float) -> float:
+	var mature := clampf((cover - WOOD_MATURE_FROM) / (WOOD_MATURE_AT - WOOD_MATURE_FROM), 0.0, 1.0)
+	return floorf(WOOD_PER_FOREST * mature)
+
+
 ## Applies a player action between ticks. Returns true on success.
 func apply_action(action: int, x: int, y: int) -> bool:
 	if can_apply(action, x, y) != "":
@@ -1271,12 +1280,14 @@ func apply_action(action: int, x: int, y: int) -> bool:
 	match action:
 		Action.CLEAR_TREES:
 			var was_forest := world.land_type[i] == LandType.FOREST
+			var got := 0.0
 			if was_forest:
 				world.land_type[i] = LandType.LOWLAND if world.elevation[i] < IslandGenerator.LOWLAND_MAX else LandType.GRASSLAND
-				world.wood = minf(world.wood + WOOD_PER_FOREST, WOOD_MAX)
+				got = wood_yield(world.vegetation_cover[i])
+				world.wood = minf(world.wood + got, WOOD_MAX)
 			world.vegetation_cover[i] = 0.06
 			ev = events.record(world.tick, EventLog.Type.TREES_CLEARED if was_forest else EventLog.Type.LAND_CLEARED,
-					x, y, WOOD_PER_FOREST if was_forest else 0.0)
+					x, y, got)
 		Action.PLANT_TREES:
 			world.land_type[i] = LandType.FOREST
 			world.vegetation_cover[i] = maxf(world.vegetation_cover[i], 0.25)

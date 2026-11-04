@@ -492,7 +492,7 @@ func _build_speed() -> void:
 	seg.add_child(srow)
 	var group := ButtonGroup.new()
 	var icons := ["pause", "play", "chevrons-right", "fast-forward"]
-	var tips := ["Pause", "Normal speed", "Fast (2×)", "Fastest (4×)"]
+	var tips := ["Pause", "Play: 1 day per second", "Fast: 2 days per second", "Fastest: 4 days per second"]
 	for k in 4:
 		var b := UiKit.button("", Vector2(50, 48), icons[k], "Segment")
 		b.toggle_mode = true
@@ -745,7 +745,7 @@ func _arm_goal_collapse(mult: float = 1.0) -> void:
 	var token := _obj_arm_token
 	if is_inside_tree():
 		get_tree().create_timer(OBJ_AUTO_SECS * mult).timeout.connect(func() -> void:
-			if token == _obj_arm_token and not coach_active():
+			if token == _obj_arm_token and not coach_active() and not popup.visible:
 				set_goals_collapsed(true))
 
 
@@ -833,14 +833,16 @@ func update_objectives(sim: Simulation) -> void:
 		_obj_key = key  # a new run: show the full checklist, then fold it away
 		_obj_done = done
 		set_goals_collapsed(false)
-		_arm_goal_collapse()
+		if not popup.visible:  # an intro popup is up: start the fold timer once it's read
+			_arm_goal_collapse()
 		_obj_status = sc.status
 	elif done > _obj_done or sc.status != _obj_status:
 		_obj_status = sc.status  # a goal just ticked (or the run ended): open to show it
 		if not (portrait and _inspector.visible):
 			set_goals_collapsed(false)
 			_arm_goal_collapse()
-	elif not _obj_collapsed and sim.world.tick - _obj_arm_tick >= OBJ_AUTO_DAYS and not coach_active():
+	elif not _obj_collapsed and sim.world.tick - _obj_arm_tick >= OBJ_AUTO_DAYS and not coach_active() \
+			and not popup.visible:
 		set_goals_collapsed(true)
 	_obj_done = done
 
@@ -1717,6 +1719,7 @@ func show_popup(title: String, body: String, icon_name: String = "") -> void:
 		return
 	_popup_title.text = title
 	_popup_body.text = body
+	_obj_arm_token += 1  # cancel a pending goals fold: they stay open under the popup (re-armed on dismiss)
 	if icon_name == "":
 		icon_name = "sparkles"
 		if title.begins_with("Tutorial"):
@@ -1734,6 +1737,8 @@ func show_popup(title: String, body: String, icon_name: String = "") -> void:
 func dismiss_popup() -> void:
 	popup.visible = false
 	_scrim.visible = false
+	if _obj_card != null and not _obj_collapsed and _popup_queue.is_empty():
+		_arm_goal_collapse()  # the goals were held open under the popup; fold them later from now
 	if not _popup_queue.is_empty():
 		var next: PackedStringArray = _popup_queue.pop_front()
 		show_popup(next[0], next[1], next[2] if next.size() > 2 else "")

@@ -101,6 +101,35 @@ func test_coach_marks_walk_through_and_end() -> void:
 	_free(main)
 
 
+func test_goals_stay_open_under_the_intro_popup() -> void:
+	var main := _main()
+	main.start_tutorial()
+	assert_true(main.hud.popup_text() != "", "intro is up")
+	var token: int = main.hud._obj_arm_token
+	main.sim.world.tick += Hud.OBJ_AUTO_DAYS + 2  # the day-based fold must also wait for the popup
+	main.hud.update_objectives(main.sim)
+	assert_false(main.hud.goals_collapsed(), "goals stay open while the intro is read")
+	main.hud.dismiss_popup()
+	assert_true(main.hud._obj_arm_token > token, "fold timer re-armed once the intro is dismissed")
+	assert_false(main.hud.goals_collapsed())
+	_free(main)
+
+
+func test_pause_menu_reaches_the_help_sheet() -> void:
+	var main := _main()
+	main.pause_game()
+	assert_eq(main.screens.current, "pause")
+	var found := false
+	for b in main.screens.find_children("*", "Button", true, false):
+		if (b as Button).text == "How to play":
+			(b as Button).pressed.emit()
+			found = true
+			break
+	assert_true(found, "pause lists How to play")
+	assert_eq(main.screens.current, "help", "How to play opens the help sheet in-game")
+	_free(main)
+
+
 func test_replayed_tips_without_goals_skip_goal_step_and_hold_time() -> void:
 	var main := _main()
 	main.new_world(7)  # sandbox: no objectives
