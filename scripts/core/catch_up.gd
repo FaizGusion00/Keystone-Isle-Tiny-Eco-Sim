@@ -60,10 +60,10 @@ func summary() -> String:
 	var ws := sim.world
 	var days := ws.tick - start_tick
 	var lines := PackedStringArray()
-	lines.append("%d days passed." % days)
-	lines.append("Villagers %d → %d   Food %d → %d   Fish %d → %d" % [
+	lines.append(I18n.f("%d days passed.", days))
+	lines.append(I18n.f("Villagers %d → %d   Food %d → %d   Fish %d → %d", [
 		before["villagers"], ws.villagers, roundi(before["food"]), roundi(ws.food_store),
-		roundi(before["fish"]), roundi(ws.fish)])
+		roundi(before["fish"]), roundi(ws.fish)]))
 	var notable := PackedStringArray()
 	var minor := {}
 	for id in sim.events.since_tick(start_tick):
@@ -71,13 +71,13 @@ func summary() -> String:
 		if t == EventLog.Type.EROSION or t == EventLog.Type.HEAVY_RAIN:
 			minor[t] = int(minor.get(t, 0)) + 1
 		else:
-			notable.append(sim.events.describe(id))
+			notable.append(EventText.title(sim.events, id, ws))
 	if notable.is_empty() and minor.is_empty():
-		lines.append("Nothing notable happened.")
+		lines.append(I18n.t("Nothing notable happened."))
 	for k in mini(notable.size(), 8):
 		lines.append("• " + notable[notable.size() - 1 - k])  # newest first
 	if notable.size() > 8:
-		lines.append("• …and %d more (see History)" % (notable.size() - 8))
+		lines.append("• " + I18n.f("…and %d more (see History)", notable.size() - 8))
 	for t in minor:
-		lines.append("• %d × %s" % [minor[t], EventLog.TYPE_NAMES[t]])
-	return "\n".join(lines)
+		lines.append("• %d × %s" % [minor[t], EventText.short_name(t)])
+	return I18n.done("\n".join(lines))

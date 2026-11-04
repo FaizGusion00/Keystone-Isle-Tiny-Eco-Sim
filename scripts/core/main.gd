@@ -80,6 +80,8 @@ func _ready() -> void:
 	if args.has("--colorblind"):
 		settings.values["colorblind"] = true
 	for a in args:
+		if a.begins_with("--lang="):
+			settings.values["language"] = a.trim_prefix("--lang=")
 		if a.begins_with("--ui-scale="):
 			settings.values["ui_scale"] = float(a.trim_prefix("--ui-scale="))
 	_on_window_resized()
@@ -161,6 +163,8 @@ func prestige() -> bool:
 
 ## Push visual/audio settings into the running game (called at start and whenever they change).
 func apply_settings() -> void:
+	if I18n.set_language(str(settings.get_value("language"))):
+		_retranslate()
 	var calm := bool(settings.get_value("reduce_motion"))
 	world_view.set_motion(not calm)
 	ambience.reduce_motion = calm
@@ -175,6 +179,22 @@ func apply_settings() -> void:
 	if screens.ui_scale != ui:
 		screens.set_ui_scale(ui)
 	settings.apply_audio()
+
+
+## The language changed: static labels re-translate themselves (auto-translate); rebuild what
+## was formatted from templates (chips, goals, inspector, open screen).
+func _retranslate() -> void:
+	if screens != null and screens.current != "":
+		screens._relayout()
+	if hud == null or sim == null:
+		return
+	hud.set_day(sim.world.tick)
+	hud.set_status(sim.world)
+	hud.set_objective(sim.scenario.objective_text(sim.world) if sim.scenario != null else "")
+	hud.update_objectives(sim)
+	hud.retranslate()
+	if hud._insp_tile.x >= 0 and hud._inspector.visible:
+		hud.show_tile(sim, hud._insp_tile)
 
 
 ## Settings screen hook: store, persist and apply one value.
@@ -209,7 +229,7 @@ func start_tutorial() -> void:
 	screens.close()
 	set_simulation(s)
 	set_speed(SimClock.Speed.NORMAL)
-	hud.show_popup("Tutorial: " + s.scenario.title(), s.scenario.intro_text(), "compass")
+	hud.show_popup(I18n.f("Tutorial: %s", I18n.t(s.scenario.title())), I18n.t(s.scenario.intro_text()), "compass")
 	_teaching = true  # the clock waits until the intro and the tips are read
 	if bool(settings.get_value("show_tutorial")):
 		hud.queue_coach()
@@ -444,7 +464,7 @@ func _on_tile_tapped(screen_pos: Vector2) -> void:
 		return
 	var action := _action_for_tool(hud.tool)
 	if action != Simulation.Action.NONE:
-		var why := sim.can_apply(action, t.x, t.y)
+		var why := placement_reason(action, t)
 		if why != "":
 			hud.toast(why, 2.5, "circle-x", true)
 			AudioDirector.sfx("ui_error")
@@ -467,6 +487,11 @@ func _on_tile_tapped(screen_pos: Vector2) -> void:
 	else:
 		AudioDirector.sfx("ui_click", 1.1, -6.0)
 	select_tile(t)
+
+
+## Why `action` can't be done on tile `t` ("" if it can), in the player's language.
+func placement_reason(action: int, t: Vector2i) -> String:
+	return I18n.t(sim.can_apply(action, t.x, t.y))
 
 
 ## "−1 labor  −2 wood" (or "+3 wood" when clearing forest) for the floater over a placed tile.
@@ -523,7 +548,7 @@ func _toast_new_events() -> void:
 	_seen_event_id = sim.events.next_id
 	if newest >= 0:
 		var bad := EventLog.is_bad(sim.events.type_of(newest))
-		hud.toast(sim.events.describe(newest), 4.0, Hud.event_icon(sim.events.type_of(newest)), bad)
+		hud.toast(EventText.title(sim.events, newest, sim.world), 4.0, Hud.event_icon(sim.events.type_of(newest)), bad)
 		AudioDirector.sfx("warn" if bad else "notify", 1.0, -4.0)
 
 
@@ -596,7 +621,7 @@ func _check_scenario() -> void:
 	AudioDirector.sfx("win" if won else "lose")
 	if screens.is_open() or catch_up != null or _suspended:
 		# keep the old text popup path for background/catch-up endings
-		hud.show_popup(("Island complete! " if won else "Island lost: ") + sim.scenario.title(), sim.scenario.reason)
+		hud.show_popup(I18n.f("Island complete! %s" if won else "Island lost: %s", I18n.t(sim.scenario.title())), I18n.t(sim.scenario.reason))
 		return
 	screens.open("results", {"won": won, "stars": sim.scenario.stars, "achievements": fresh,
 		"chain": PackedStringArray() if won else _failure_chain(), "run": run})
@@ -607,15 +632,15 @@ func _failure_chain() -> PackedStringArray:
 	for id in sim.events.recent(EventLog.CAPACITY):
 		var t := sim.events.type_of(id)
 		if t == EventLog.Type.POPULATION_LOSS or t == EventLog.Type.FOOD_SHORTAGE or t == EventLog.Type.WATER_SHORTAGE:
-			return sim.events.explain(id)
+			return EventText.chain_lines(sim.events, id, sim.world)
 	var fallback := PackedStringArray()
 	for id in sim.events.recent(EventLog.CAPACITY):
 		if EventLog.is_bad(sim.events.type_of(id)):
 			var chain: PackedStringArray = sim.events.explain(id)
 			if chain.size() > 1 and not chain[1].contains("No recorded cause"):
-				return chain
+				return EventText.chain_lines(sim.events, id, sim.world)
 			if fallback.is_empty():
-				fallback = chain
+				fallback = EventText.chain_lines(sim.events, id, sim.world)
 	return fallback
 
 
@@ -752,6 +777,7 @@ func quit_game() -> void:
 	if AudioDirector.current != null:
 		AudioDirector.current.shutdown()
 	await drain_audio()
+	I18n.shutdown()
 	get_tree().quit()
 
 
@@ -802,7 +828,7 @@ func _finish_catch_up(show_summary: bool) -> void:
 	_seen_event_id = sim.events.next_id
 	_refresh_ui()
 	if show_summary and cu.total >= CatchUp.SUMMARY_MIN_TICKS:
-		hud.show_popup("While you were away", cu.summary())
+		hud.show_popup(I18n.t("While you were away"), cu.summary(), "history")
 	_check_scenario()
 	_check_achievements(true)
 	autosave()

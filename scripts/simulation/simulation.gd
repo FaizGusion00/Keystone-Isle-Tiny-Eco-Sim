@@ -1255,9 +1255,9 @@ func can_apply(action: int, x: int, y: int) -> String:
 		return r
 	var c := action_cost(action)
 	if world.labor + 1e-6 < c.x:
-		return "Not enough labor: needs %d, you have %d" % [ceili(c.x), floori(world.labor)]
+		return I18n.f("Not enough labor: needs %d, you have %d", [ceili(c.x), floori(world.labor)])
 	if world.wood + 1e-6 < c.y:
-		return "Not enough wood: needs %d, you have %d (clear forest for wood)" % [ceili(c.y), floori(world.wood)]
+		return I18n.f("Not enough wood: needs %d, you have %d (clear forest for wood)", [ceili(c.y), floori(world.wood)])
 	return ""
 
 

@@ -298,7 +298,7 @@ func _menu(sz: Vector2) -> Control:
 	foot.add_child(s2)
 	var s3 := UiKit.hbox(4)
 	s3.add_child(UiKit.icon("sparkles", 18, pr.banner_color()))
-	s3.add_child(UiKit.label("Level %d%s" % [pr.level(), "  ·  P%d" % pr.prestige if pr.prestige > 0 else ""], 0, "Caption"))
+	s3.add_child(UiKit.label("Level %d%s" % [pr.level(), I18n.t("  ·  P%d") % pr.prestige if pr.prestige > 0 else ""], 0, "Caption"))
 	foot.add_child(s3)
 	col.add_child(foot)
 	var card: PanelContainer = null
@@ -307,7 +307,7 @@ func _menu(sz: Vector2) -> Control:
 		holder.remove_child(col)
 		card.add_child(col)
 		holder.add_child(card)
-	var ver := UiKit.label("v1.0 · made with Godot", 0, "Caption")
+	var ver := UiKit.label(I18n.f("v%s · made with Godot", str(ProjectSettings.get_setting("application/config/version", "1.0"))), 0, "Caption")
 	ver.modulate.a = 0.7
 	holder.add_child(ver)
 	_post_fit = func() -> void:
@@ -379,7 +379,7 @@ func _scenario_card(d: Dictionary, pr: Progress) -> Control:
 	head.add_child(badge)
 	var tc := UiKit.vbox(0)
 	tc.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	tc.add_child(UiKit.label(("Island %d" if d["kind"] == "campaign" else "Challenge %d") % int(d["index"]), 0, "Caption"))
+	tc.add_child(UiKit.label(I18n.f("Island %d" if d["kind"] == "campaign" else "Challenge %d", int(d["index"])), 0, "Caption"))
 	var t := UiKit.label(str(d["title"]), 20, "Heading")
 	t.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	tc.add_child(t)
@@ -432,7 +432,7 @@ func _new_world(sz: Vector2) -> Control:
 	var s2 := _section(body, "Size", "maximize")
 	var labels := []
 	for k in ScenarioCatalog.SIZES.size():
-		labels.append("%s · %d" % [SIZE_LABELS[k], ScenarioCatalog.SIZES[k]] if not portrait else SIZE_LABELS[k])
+		labels.append(I18n.done("%s · %d" % [I18n.t(SIZE_LABELS[k]), ScenarioCatalog.SIZES[k]]) if not portrait else SIZE_LABELS[k])
 	s2.add_child(UiKit.segmented(labels, int(_nw["size"]), func(k: int) -> void: _nw["size"] = k))
 	var s3 := _section(body, "Biome", "palette")
 	var blurb := UiKit.wrap_label(IslandGenerator.PRESET_BLURBS[int(_nw["preset"])], "Caption")
@@ -503,8 +503,14 @@ func _settings(sz: Vector2) -> Control:
 		"Small vibrations on phones and tablets.")
 	_row(c, "compass", "Tutorial tips", UiKit.toggle(bool(st.get_value("show_tutorial")), func(v: bool) -> void: main.change_setting("show_tutorial", v)),
 		"Show coach marks on the first island.")
-	var lang := UiKit.segmented(["English"], 0, func(_k: int) -> void: pass)
-	_row(c, "languages", "Language", lang, "More languages coming; all text is ready for translation.")
+	var names := []
+	for l in I18n.LANGUAGES:
+		names.append(l[1])
+	var lang := UiKit.segmented(names, maxi(0, I18n.codes().find(str(st.get_value("language")))),
+		func(k: int) -> void: main.change_setting("language", I18n.LANGUAGES[k][0]))
+	for b in lang.find_children("*", "Button", true, false):
+		(b as Button).auto_translate_mode = Node.AUTO_TRANSLATE_MODE_DISABLED  # names stay in their own language
+	_row(c, "languages", "Language", lang, "Switch any time; the game changes straight away.")
 	return _fit_sheet(parts, sz)
 
 
@@ -590,9 +596,9 @@ func _slots(sz: Vector2, saving: bool) -> Control:
 	var body: VBoxContainer = parts[2]
 	var paths: Array = []
 	if not saving:
-		paths.append([main.save_path, "Autosave", -1])
+		paths.append([main.save_path, I18n.t("Autosave"), -1])
 	for k in SaveSystem.SLOT_COUNT:
-		paths.append([SaveSystem.slot_path(k), "Slot %d" % (k + 1), k])
+		paths.append([SaveSystem.slot_path(k), I18n.t("Slot %d") % (k + 1), k])
 	for p in paths:
 		var info := SaveSystem.slot_info(str(p[0]))
 		var card := UiKit.card("Inset")
@@ -603,7 +609,7 @@ func _slots(sz: Vector2, saving: bool) -> Control:
 			UiKit.TEAL_SOFT if not empty else Color(UiKit.INK, 0.06), UiKit.TEAL_DARK if not empty else UiKit.INK_FAINT, 42))
 		var c := UiKit.vbox(0)
 		c.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-		c.add_child(UiKit.label(str(p[1]) + ("" if empty else " · " + str(info.get("title", "Island"))), 17, "Subheading"))
+		c.add_child(UiKit.label(I18n.done(str(p[1]) + ("" if empty else " · " + I18n.t(str(info.get("title", "Island"))))), 17, "Subheading"))
 		if empty:
 			c.add_child(UiKit.label("Empty", 0, "Caption"))
 		else:
@@ -636,7 +642,7 @@ func _when(unix: float) -> String:
 	if unix <= 0.0:
 		return ""
 	var d := Time.get_datetime_dict_from_unix_time(int(unix + Time.get_time_zone_from_system().get("bias", 0) * 60))
-	return "Saved %04d-%02d-%02d %02d:%02d" % [d["year"], d["month"], d["day"], d["hour"], d["minute"]]
+	return I18n.t("Saved %04d-%02d-%02d %02d:%02d") % [d["year"], d["month"], d["day"], d["hour"], d["minute"]]
 
 
 # ================================================================== results
@@ -715,7 +721,7 @@ func _results(sz: Vector2) -> Control:
 		ar.add_child(h)
 		h.add_child(UiKit.icon_badge(str(info.get("icon", "award")), UiKit.TEAL, Color.WHITE, 40))
 		var tv := UiKit.vbox(0)
-		tv.add_child(UiKit.label("Achievement: " + str(info.get("title", "")), 17, "Subheading"))
+		tv.add_child(UiKit.label(I18n.f("Achievement: %s", I18n.t(str(info.get("title", "")))), 17, "Subheading"))
 		tv.add_child(UiKit.label(str(info.get("text", "")), 0, "Caption"))
 		h.add_child(tv)
 		body.add_child(ar)
@@ -755,7 +761,7 @@ func _achievements(sz: Vector2) -> Control:
 	var body: VBoxContainer = parts[2]
 	_add_journal_tabs(parts, 2, sz)
 	var pr: Progress = main.progress
-	body.add_child(UiKit.label("%d of %d earned" % [pr.achievements.size(), Achievements.LIST.size()], 0, "Caption"))
+	body.add_child(UiKit.label(I18n.f("%d of %d earned", [pr.achievements.size(), Achievements.LIST.size()]), 0, "Caption"))
 	var grid := GridContainer.new()
 	grid.columns = 1 if portrait else (3 if sz.x >= 980 else 2)
 	grid.add_theme_constant_override("h_separation", 10)
@@ -839,7 +845,7 @@ func _mode_card(d: Dictionary, pr: Progress) -> Control:
 	tc.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	tc.add_child(UiKit.label(str(md.get("title", mode.capitalize())), 20, "Heading"))
 	var sub := str(d["title"]).get_slice("·", 1).strip_edges()
-	tc.add_child(UiKit.label("%s · %s island" % [sub, IslandGenerator.PRESET_NAMES[int(d["preset"]) % 4]], 0, "Caption"))
+	tc.add_child(UiKit.label(I18n.f("%s · %s island", [sub, I18n.t(IslandGenerator.PRESET_NAMES[int(d["preset"]) % 4])]), 0, "Caption"))
 	head.add_child(tc)
 	col.add_child(head)
 	var blurb := UiKit.wrap_label(str(md.get("blurb", "")), "")
@@ -856,7 +862,7 @@ func _mode_card(d: Dictionary, pr: Progress) -> Control:
 			ml.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 			r.add_child(ml)
 			col.add_child(r)
-		col.add_child(UiKit.label("Score bonus ×%.2f" % float(d.get("score_mult", 1.0)), 0, "Caption"))
+		col.add_child(UiKit.label(I18n.f("Score bonus ×%.2f", float(d.get("score_mult", 1.0))), 0, "Caption"))
 	elif d.has("census"):
 		var cz: Array = d["census"]
 		col.add_child(UiKit.wrap_label("Yearly census (every 120 days): at least %d villagers, +%d each year (up to %d)." % [int(cz[0]), int(cz[1]), int(cz[2])], "Caption"))
@@ -872,7 +878,7 @@ func _mode_card(d: Dictionary, pr: Progress) -> Control:
 		foot.add_child(UiKit.label("Not played yet", 0, "Caption"))
 	else:
 		foot.add_child(_medal_icon(int(b.get("medal", 0)), 22))
-		foot.add_child(UiKit.label("Best %d" % int(b.get("score", 0)), 16, "Subheading"))
+		foot.add_child(UiKit.label(I18n.f("Best %d", int(b.get("score", 0))), 16, "Subheading"))
 	foot.add_child(UiKit.spacer())
 	if mode == "endless" and unlocked:
 		var dice := UiKit.icon_button("dice-5", "Another island")
@@ -924,14 +930,14 @@ func _journal(sz: Vector2) -> Control:
 	lh.add_child(lvl)
 	var lv := UiKit.vbox(4)
 	lv.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	var lt := "Steward level %d" % pr.level()
+	var lt := I18n.t("Steward level %d") % pr.level()
 	if pr.prestige > 0:
-		lt += "  ·  Prestige %d" % pr.prestige
+		lt += I18n.t("  ·  Prestige %d") % pr.prestige
 	lv.add_child(UiKit.label(lt, 22, "Heading"))
 	lv.add_child(UiKit.meter(pr.level_progress(), UiKit.TEAL, 10))
 	var nxt := Progress.xp_for_level(pr.level() + 1)
-	lv.add_child(UiKit.label("%d / %d XP to level %d%s" % [pr.xp, nxt, pr.level() + 1,
-		"  ·  +%d%% XP from prestige" % (10 * pr.prestige) if pr.prestige > 0 else ""], 0, "Caption"))
+	lv.add_child(UiKit.label(I18n.done(I18n.f("%d / %d XP to level %d", [pr.xp, nxt, pr.level() + 1]) +
+		(I18n.t("  ·  +%d%% XP from prestige") % (10 * pr.prestige) if pr.prestige > 0 else "")), 0, "Caption"))
 	lh.add_child(lv)
 	body.add_child(lc)
 	# stats
@@ -940,11 +946,11 @@ func _journal(sz: Vector2) -> Control:
 	flow.add_theme_constant_override("h_separation", 18)
 	flow.add_theme_constant_override("v_separation", 8)
 	st.add_child(flow)
-	for it in [["star-fill", UiKit.AMBER, "%d stars" % pr.total_stars()], ["trophy", UiKit.TEAL, "%d islands won" % pr.games_won],
-			["medal", MEDAL_COLORS[3], "%d medals" % pr.medal_count()],
-			["bird", UiKit.SKY, "%d/%d species" % [pr.species_count(), ContentDB.species().size()]],
-			["zap", UiKit.CORAL, "%d/%d rare events" % [pr.codex_events.size(), ContentDB.rare_events().size()]],
-			["award", UiKit.TEAL, "%d/%d achievements" % [pr.achievements.size(), Achievements.LIST.size()]]]:
+	for it in [["star-fill", UiKit.AMBER, I18n.t("%d stars") % pr.total_stars()], ["trophy", UiKit.TEAL, I18n.t("%d islands won") % pr.games_won],
+			["medal", MEDAL_COLORS[3], I18n.t("%d medals") % pr.medal_count()],
+			["bird", UiKit.SKY, I18n.t("%d/%d species") % [pr.species_count(), ContentDB.species().size()]],
+			["zap", UiKit.CORAL, I18n.t("%d/%d rare events") % [pr.codex_events.size(), ContentDB.rare_events().size()]],
+			["award", UiKit.TEAL, I18n.t("%d/%d achievements") % [pr.achievements.size(), Achievements.LIST.size()]]]:
 		var h := UiKit.hbox(6)
 		h.add_child(UiKit.icon(it[0], 20, it[1]))
 		h.add_child(UiKit.label(it[2], 16))
@@ -968,8 +974,8 @@ func _journal(sz: Vector2) -> Control:
 		ps_text.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		ph.add_child(ps_text)
 		ps = ph
-	ps_text.add_child(UiKit.wrap_label("At level %d you may start a new prestige: your level returns to 1, every later run earns 10%% more XP, "
-		% int(ContentDB.mode("xp").get("prestige_level", 10)) + "and the Deep sea banner unlocks. Stars, medals, bests, codex and banners are kept.", "Caption"))
+	ps_text.add_child(UiKit.wrap_label(I18n.f("At level %d you may start a new prestige: your level returns to 1, every later run earns 10%% more XP, and the Deep sea banner unlocks. Stars, medals, bests, codex and banners are kept.",
+		int(ContentDB.mode("xp").get("prestige_level", 10))), "Caption"))
 	var pb := UiKit.button("Tap again to confirm" if _prestige_armed else "Prestige now", Vector2(0, 54), "rotate-ccw",
 		"Primary" if _prestige_armed else "")
 	pb.size_flags_horizontal = Control.SIZE_SHRINK_END
@@ -1000,7 +1006,7 @@ func _banner_chip(b: Dictionary, pr: Progress) -> Control:
 	btn.add_theme_color_override("icon_hover_color", Color.html(str(b["color"])) if have and not sel else (Color.WHITE if sel else UiKit.INK_FAINT))
 	btn.expand_icon = false
 	btn.disabled = not have
-	btn.tooltip_text = "%s banner" % b["title"]
+	btn.tooltip_text = I18n.t("%s banner") % b["title"]
 	var id := str(b["id"])
 	btn.pressed.connect(func() -> void:
 		main.set_banner(id)
@@ -1011,13 +1017,13 @@ func _banner_chip(b: Dictionary, pr: Progress) -> Control:
 
 func _unlock_text(u: Dictionary) -> String:
 	if u.has("level"):
-		return "Level %d" % int(u["level"])
+		return I18n.t("Level %d") % int(u["level"])
 	if u.has("medals"):
-		return "%d medals" % int(u["medals"])
+		return I18n.t("%d medals") % int(u["medals"])
 	if u.has("prestige"):
-		return "Prestige %d" % int(u["prestige"])
+		return I18n.t("Prestige %d") % int(u["prestige"])
 	if u.has("species"):
-		return "%d species" % int(u["species"])
+		return I18n.t("%d species") % int(u["species"])
 	return "Locked"
 
 
@@ -1038,7 +1044,7 @@ func _codex(sz: Vector2) -> Control:
 	for s in ContentDB.species():
 		var seen := (pr.codex_species & int(s["bit"])) != 0
 		g1.add_child(_codex_card(str(s["icon"]), str(s["title"]) if seen else "Undiscovered species", seen,
-			["Needs: " + str(s["needs"]), str(s["effect"]) if seen else "Its effect is revealed once it settles on one of your islands."]))
+			[I18n.f("Needs: %s", I18n.t(str(s["needs"]))), str(s["effect"]) if seen else "Its effect is revealed once it settles on one of your islands."]))
 	var ev := _section(body, "Rare events", "zap")
 	var g2 := GridContainer.new()
 	g2.columns = cols
@@ -1048,7 +1054,7 @@ func _codex(sz: Vector2) -> Control:
 	for r in ContentDB.rare_events():
 		var seen := pr.codex_events.has(str(r["type"]))
 		g2.add_child(_codex_card(str(r["icon"]), str(r["title"]) if seen else "Unknown event", seen,
-			[str(r["text"]), "Counter: " + str(r["counter"])] if seen else ["Not witnessed yet. Survive long enough on a seeded island to see it."]))
+			[str(r["text"]), I18n.f("Counter: %s", I18n.t(str(r["counter"])))] if seen else ["Not witnessed yet. Survive long enough on a seeded island to see it."]))
 	return _fit_sheet(parts, sz)
 
 
@@ -1126,12 +1132,12 @@ func _score_block(sc: Scenario, run: Dictionary) -> Control:
 	var ml := UiKit.label(Scenario.MEDAL_NAMES[m].capitalize() + (" medal" if m > 0 else ""), 18, "Subheading")
 	ml.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	box.add_child(ml)
-	var pts := UiKit.label("%d points" % sc.final_score, 40, "Title")
+	var pts := UiKit.label(I18n.f("%d points", sc.final_score), 40, "Title")
 	pts.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	box.add_child(pts)
 	var medals: Array = sc.def.get("medals", [])
 	if m < medals.size():
-		var nx := UiKit.label("%d more for %s" % [int(medals[m]) - sc.final_score, Scenario.MEDAL_NAMES[m + 1]], 0, "Caption")
+		var nx := UiKit.label(I18n.f("%d more for %s", [int(medals[m]) - sc.final_score, I18n.t(Scenario.MEDAL_NAMES[m + 1])]), 0, "Caption")
 		nx.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 		box.add_child(nx)
 	if bool(run.get("new_best", false)):
@@ -1153,9 +1159,9 @@ func _xp_line(run: Dictionary) -> Control:
 	h.add_child(UiKit.icon_badge("sparkles", pr.banner_color(), Color.WHITE, 40))
 	var v := UiKit.vbox(2)
 	v.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	var t := "+%d XP" % int(run.get("xp", 0))
+	var t := I18n.t("+%d XP") % int(run.get("xp", 0))
 	if bool(run.get("level_up", false)):
-		t += "  ·  Level up! You are now level %d" % pr.level()
+		t = I18n.done(t + I18n.t("  ·  Level up! You are now level %d") % pr.level())
 	v.add_child(UiKit.label(t, 17, "Subheading"))
 	if bool(run.get("off_clock", false)):
 		var oc := UiKit.label("Your device clock is earlier than a day you already played, so this score stays on this device.", 0, "Caption")

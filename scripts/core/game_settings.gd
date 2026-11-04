@@ -17,7 +17,9 @@ static func load_from(p: String = PATH) -> GameSettings:
 	var s := GameSettings.new()
 	s.path = p
 	var cfg := ConfigFile.new()
-	if cfg.load(p) == OK:
+	if cfg.load(p) != OK:
+		s.values["language"] = I18n.default_language()  # first launch: follow the device
+	else:
 		for k in DEFAULTS:
 			var v = cfg.get_value("settings", k, DEFAULTS[k])
 			if typeof(v) == typeof(DEFAULTS[k]) or (DEFAULTS[k] is float and v is int):

@@ -522,8 +522,18 @@ func set_speed(s: int) -> void:
 		_speed_buttons[k].set_pressed_no_signal(k == s)
 
 
+## Language changed: refresh text that was built from templates (costs, coach step, history).
+func retranslate() -> void:
+	if _sim != null:
+		_update_costs(_sim.world)
+	if coach_active():
+		_coach_go(_coach_i)
+	if events_panel != null and events_panel.visible and _sim != null:
+		show_events(_sim.events, _selected_event)
+
+
 func set_day(day: int) -> void:
-	_day_label.text = "Day %d" % day
+	_day_label.text = I18n.t("Day %d") % day
 	var season := Simulation.season_of(day)
 	_season_label.text = Simulation.SEASON_NAMES[season]
 	_season_icon.texture = UiKit.icon_tex(SEASON_ICONS[season])
@@ -540,7 +550,7 @@ func set_status(ws: WorldState) -> void:
 	var lab_cap := Simulation.LABOR_CAP_BASE + ws.villagers
 	_chip("labor", "%d" % floori(ws.labor) if ws.free_build == false else "∞", false)
 	_chip("wood", "%d" % floori(ws.wood) if ws.free_build == false else "∞", false)
-	_chips["labor"]["panel"].tooltip_text = "Labor: %d of %d. Spent by tools, regrows each day." % [floori(ws.labor), roundi(lab_cap)]
+	_chips["labor"]["panel"].tooltip_text = I18n.t("Labor: %d of %d. Spent by tools, regrows each day.") % [floori(ws.labor), roundi(lab_cap)]
 	var k := clampf(ws.keystone / 100.0, 0.0, 1.0)
 	_keystone_bar.value = k
 	_keystone_value.text = "%d" % roundi(ws.keystone)
@@ -548,14 +558,14 @@ func set_status(ws: WorldState) -> void:
 	# weather on the day chip
 	if ws.rain_today >= Simulation.HEAVY_RAIN:
 		_season_icon.texture = UiKit.icon_tex("cloud-lightning")
-		_season_label.text = Simulation.SEASON_NAMES[Simulation.season_of(ws.tick)] + " · Storm"
+		_season_label.text = I18n.f("%s · Storm", I18n.t(Simulation.SEASON_NAMES[Simulation.season_of(ws.tick)]))
 	elif ws.rain_today > 0.0:
 		_season_icon.texture = UiKit.icon_tex("cloud-drizzle")
-		_season_label.text = Simulation.SEASON_NAMES[Simulation.season_of(ws.tick)] + " · Rain"
+		_season_label.text = I18n.f("%s · Rain", I18n.t(Simulation.SEASON_NAMES[Simulation.season_of(ws.tick)]))
 	elif ws.fires_burning > 0:
 		_season_icon.texture = UiKit.icon_tex("flame")
-		_season_label.text = Simulation.SEASON_NAMES[Simulation.season_of(ws.tick)] + " · Wildfire!"
-	status_label.text = "Villagers %d   Food %d   Fish %d   Goats %d   Water %d%%   Health %d" % [
+		_season_label.text = I18n.f("%s · Wildfire!", I18n.t(Simulation.SEASON_NAMES[Simulation.season_of(ws.tick)]))
+	status_label.text = I18n.t("Villagers %d   Food %d   Fish %d   Goats %d   Water %d%%   Health %d") % [
 		ws.villagers, roundi(ws.food_store), roundi(ws.fish), roundi(ws.goats), roundi(ws.water_ema * 100.0), roundi(ws.keystone)]
 	_update_costs(ws)
 
@@ -803,11 +813,11 @@ func update_objectives(sim: Simulation) -> void:
 	if sc.is_sandbox():
 		foot = "Free play · no goals or deadline"
 	elif sc.status == Scenario.Status.WON:
-		foot = "Complete · %d of 3 stars" % sc.stars
+		foot = I18n.t("Complete · %d of 3 stars") % sc.stars
 	elif sc.status == Scenario.Status.FAILED:
-		foot = "Failed · " + sc.reason
+		foot = I18n.f("Failed · %s", I18n.t(sc.reason))
 	elif sc.deadline() > 0:
-		foot = "%d days left" % maxi(0, sc.deadline() - sc.days_elapsed(sim.world))
+		foot = I18n.t("%d days left") % maxi(0, sc.deadline() - sc.days_elapsed(sim.world))
 	_obj_footer.text = foot
 	_obj_footer.visible = foot != "" and not _obj_collapsed
 	# compact pill summary + auto-collapse bookkeeping
@@ -819,13 +829,13 @@ func update_objectives(sim: Simulation) -> void:
 	if sc.is_sandbox():
 		summ = "Free play"
 	elif sc.status == Scenario.Status.WON:
-		summ = "Done · %d★" % sc.stars
+		summ = I18n.t("Done · %d★") % sc.stars
 	elif sc.status == Scenario.Status.FAILED:
 		summ = "Failed"
 	else:
 		summ = "%d/%d" % [done, objs.size()]
 		if sc.deadline() > 0:
-			summ += " · %d d" % maxi(0, sc.deadline() - sc.days_elapsed(sim.world))
+			summ += I18n.t(" · %d d") % maxi(0, sc.deadline() - sc.days_elapsed(sim.world))
 	_obj_summary.text = summ
 	_obj_summary.visible = _obj_collapsed and summ != ""
 	var key := "%s|%d" % [sc.title(), sim.get_instance_id()]
@@ -908,7 +918,7 @@ func show_tile(sim: Simulation, t: Vector2i) -> void:
 	var i := ws.index(t.x, t.y)
 	var info := tile_header(sim, t)
 	_insp_title.text = info[0]
-	_insp_sub.text = "%s · tile %d, %d" % [info[1], t.x, t.y]
+	_insp_sub.text = I18n.t(str(info[1]))
 	(_insp_badge.get_child(0) as TextureRect).texture = UiKit.icon_tex(info[2])
 	var rows := tile_rows(sim, t)
 	while _insp_rows.get_child_count() < rows.size():
@@ -930,7 +940,7 @@ func show_tile(sim: Simulation, t: Vector2i) -> void:
 	var has_ev := sim.events.has(_insp_event_id)
 	_insp_event_box.visible = has_ev
 	if has_ev:
-		_insp_event.text = sim.events.describe(_insp_event_id)
+		_insp_event.text = EventText.line(sim.events, _insp_event_id, sim.world)
 	if fresh:
 		_inspector.visible = true
 		relayout()
@@ -984,7 +994,7 @@ func tile_rows(sim: Simulation, t: Vector2i) -> Array:
 	var sw := ws.surface_water[i]
 	if ws.structure[i] != WorldState.Structure.NONE and ws.structure[i] != WorldState.Structure.DAM \
 			and (sw >= 0.2 or ws.tick - ws.flood_tick[i] < 6):
-		rows.append(["waves", "Flood water", "%d cm" % roundi(sw * 100.0), clampf(sw / Simulation.FLOOD_DEPTH, 0.0, 1.0), UiKit.CORAL])
+		rows.append(["waves", "Flood water", I18n.t("%d cm") % roundi(sw * 100.0), clampf(sw / Simulation.FLOOD_DEPTH, 0.0, 1.0), UiKit.CORAL])
 	match ws.structure[i]:
 		WorldState.Structure.SETTLEMENT:
 			var cap := ws.housing_capacity()
@@ -1003,7 +1013,7 @@ func tile_rows(sim: Simulation, t: Vector2i) -> Array:
 				UiKit.CORAL if ws.crop_stress[i] > 0 else UiKit.SKY])
 			rows.append(["mountain", "Soil depth", "%d%%" % roundi(ws.soil_depth[i] * 100.0), ws.soil_depth[i], Color("9a7650")])
 			if ws.crop_stress[i] > 0:
-				rows.append(["triangle-alert", "Too dry for", "%d days" % ws.crop_stress[i], -1.0])
+				rows.append(["triangle-alert", "Too dry for", I18n.t("%d days") % ws.crop_stress[i], -1.0])
 			return rows
 		WorldState.Structure.DAM:
 			rows.append(["waves", "Water held", "%d%%" % roundi(clampf(ws.reservoir[i], 0.0, 1.0) * 100.0), clampf(ws.reservoir[i], 0.0, 1.0), UiKit.SKY])
@@ -1019,10 +1029,10 @@ func tile_rows(sim: Simulation, t: Vector2i) -> Array:
 	rows.append(["droplet", "Soil moisture", "%d%%" % roundi(ws.soil_moisture[i] * 100.0), ws.soil_moisture[i], UiKit.SKY])
 	rows.append(["leaf", "Plant cover", "%d%%" % roundi(ws.vegetation_cover[i] * 100.0), ws.vegetation_cover[i], UiKit.LEAF])
 	rows.append(["mountain", "Topsoil", "%d%%" % roundi(ws.soil_depth[i] * 100.0), ws.soil_depth[i], Color("9a7650")])
-	rows.append(["gauge", "Elevation", "%d m" % roundi(ws.elevation[i] * 120.0), ws.elevation[i], UiKit.INK_FAINT])
+	rows.append(["gauge", "Elevation", I18n.t("%d m") % roundi(ws.elevation[i] * 120.0), ws.elevation[i], UiKit.INK_FAINT])
 	_flood_row(sim, i, rows)
 	if sw > 0.01 and str(rows[0][1]) != "Flood water":
-		rows.append(["droplets", "Runoff", "%.0f mm" % (ws.surface_water[i] * 1000.0), -1.0])
+		rows.append(["droplets", "Runoff", I18n.t("%.0f mm") % (ws.surface_water[i] * 1000.0), -1.0])
 	return rows
 
 
@@ -1033,7 +1043,7 @@ func _flood_row(sim: Simulation, i: int, rows: Array) -> void:
 		return
 	var level := clampf(sim.river_stage(r) / sim.flood_stage_for(i), 0.0, 1.5)
 	var label := "Floodplain" if sim.flood_risk(i) == 2 else "High bank"
-	rows.append(["waves", label, "river %d%%" % roundi(level * 100.0), minf(level, 1.0),
+	rows.append(["waves", label, I18n.t("river %d%%") % roundi(level * 100.0), minf(level, 1.0),
 		UiKit.CORAL if level >= 0.8 else UiKit.SKY])
 
 
@@ -1217,7 +1227,7 @@ func _update_costs(ws: WorldState) -> void:
 		else:
 			var raw: Array = Simulation.ACTION_COST.get(TOOL_ACTIONS[t], [0.0, 0.0])
 			c = Vector2(raw[0], raw[1]) * (0.5 if ws.relaxed else 1.0) * (0.0 if ws.free_build else 1.0)
-		var txt := "free" if c == Vector2.ZERO else ("%s labor" % _num(c.x) if c.y <= 0.0 else "%s · %s wood" % [_num(c.x), _num(c.y)])
+		var txt := I18n.t("free") if c == Vector2.ZERO else (I18n.f("%s labor", _num(c.x)) if c.y <= 0.0 else I18n.f("%s · %s wood", [_num(c.x), _num(c.y)]))
 		var short := ws.labor + 1e-6 < c.x or ws.wood + 1e-6 < c.y
 		_tool_cost[t].text = txt
 		_tool_cost[t].set_meta("short", short)
@@ -1424,12 +1434,10 @@ func _event_row(log_: EventLog, id: int) -> Button:
 	if EventLog.is_bad(t):
 		col = UiKit.CORAL
 	row.add_child(UiKit.icon_badge(event_icon(t), Color(col, 0.16), col, 34))
-	var day := UiKit.label("Day %d" % log_.tick_of(id), 0, "Badge")
+	var day := UiKit.label(I18n.f("Day %d", log_.tick_of(id)), 0, "Badge")
 	day.custom_minimum_size.x = 56
 	row.add_child(day)
-	var text := log_.describe(id)
-	var colon := text.find(": ")
-	var lab := UiKit.label(text.substr(colon + 2) if colon >= 0 else text, 16)
+	var lab := UiKit.label(EventText.title(log_, id, _sim.world if _sim != null else null), 16)
 	lab.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	lab.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
 	lab.clip_text = true
@@ -1461,34 +1469,31 @@ func show_explanation(id: int) -> void:
 	for b in _events_list.get_children():
 		if b is Button:
 			(b as Button).set_pressed_no_signal(int(b.get_meta("event_id", -2)) == id)
-	_explain_lines = _event_log.explain(id)
+	var ws: WorldState = _sim.world if _sim != null else null
+	_explain_lines = EventText.chain_lines(_event_log, id, ws)
 	_set_hist_detail(true)
 	_chain_scroll.scroll_vertical = 0
 	for c in _chain.get_children():
 		_chain.remove_child(c)
 		c.queue_free()
 	var k := 0
-	for line in _explain_lines:
-		var depth := 0
-		while line.begins_with("  "):
-			line = line.substr(2)
-			depth += 1
+	for r in EventText.chain(_event_log, id, ws):
+		var depth := int(r["depth"])
 		var indent := 18.0 * maxf(0, depth - 1)
-		if line.begins_with("(caused by ") or line.begins_with("No recorded") or line.begins_with("…"):
-			var cap := UiKit.label(line.trim_prefix("(").trim_suffix(")"), 0, "Caption")
+		var text := str(r["text"])
+		if str(r["kind"]) != "event":
+			var cap := UiKit.label(text, 0, "Caption")
 			var m := MarginContainer.new()
 			m.add_theme_constant_override("margin_left", int(indent + 44))
 			m.add_theme_constant_override("margin_top", 2)
 			m.add_theme_constant_override("margin_bottom", 6)
-			var r := UiKit.hbox(6)
-			r.add_child(UiKit.icon("sparkles", 14, UiKit.INK_FAINT))
-			r.add_child(cap)
-			m.add_child(r)
+			var rr := UiKit.hbox(6)
+			rr.add_child(UiKit.icon("sparkles", 14, UiKit.INK_FAINT))
+			rr.add_child(cap)
+			m.add_child(rr)
 			_chain.add_child(m)
 			continue
-		var is_cause := line.begins_with("because ")
-		var text := line.trim_prefix("because ")
-		if is_cause:
+		if depth > 0:
 			var conn := MarginContainer.new()
 			conn.add_theme_constant_override("margin_left", int(indent + 14))
 			var cr := UiKit.hbox(6)
@@ -1500,7 +1505,7 @@ func show_explanation(id: int) -> void:
 		var cm := MarginContainer.new()
 		cm.add_theme_constant_override("margin_left", int(indent))
 		var crow := UiKit.hbox(10)
-		var ev_type := _type_from_text(text)
+		var ev_type := int(r["type"])
 		var kind := EventLog.kind_of_type(ev_type)
 		var colr: Color = UiKit.CORAL if EventLog.is_bad(ev_type) else KIND_COLORS[kind]
 		crow.add_child(UiKit.icon_badge(event_icon(ev_type), Color(colr, 0.16), colr, 32))
@@ -1517,19 +1522,6 @@ func show_explanation(id: int) -> void:
 			var tw := cm.create_tween()
 			tw.tween_property(cm, "modulate:a", 1.0, 0.18).set_delay(0.04 * k)
 		k += 1
-
-
-func _type_from_text(text: String) -> int:
-	var colon := text.find(": ")
-	var rest := text.substr(colon + 2) if colon >= 0 else text
-	var best := 0
-	var best_len := 0
-	for t in EventLog.TYPE_NAMES:
-		var n: String = EventLog.TYPE_NAMES[t]
-		if rest.begins_with(n) and n.length() > best_len:
-			best = t
-			best_len = n.length()
-	return best
 
 
 func explanation_text() -> String:
