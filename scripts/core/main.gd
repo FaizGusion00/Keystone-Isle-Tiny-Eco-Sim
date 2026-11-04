@@ -803,7 +803,7 @@ func drain_audio(guard_ms := 3000) -> void:
 
 func _process(delta: float) -> void:
 	if _teaching:
-		_teaching = hud.coach_active() or hud.popup.visible or hud._coach_pending
+		_teaching = hud.coach_active() or hud.popup_open() or hud._coach_pending
 	clock.teaching = _teaching or hud.coach_active()  # tips (first run or replayed) never let days slip by
 	if screens != null and screens.current == "menu" and not UiKit.reduce_motion and sim != null:
 		# slow cinematic drift around the framed island behind the title screen (fades in after the framing tween)

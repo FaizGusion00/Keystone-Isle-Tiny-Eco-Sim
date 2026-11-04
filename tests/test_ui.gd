@@ -84,7 +84,7 @@ func test_toolbar_shows_costs_and_inspector_and_why_chain() -> void:
 	assert_true(main.hud.events_panel.visible)
 	assert_true(main.hud.explanation_text().contains("because") or main.hud.explanation_text().contains("caused by"), main.hud.explanation_text())
 	main.hud.hide_events()
-	assert_false(main.hud.events_panel.visible)
+	assert_false(main.hud.events_open(), "closed at once (the drawer then fades out)")
 	_free(main)
 
 
@@ -175,7 +175,8 @@ func test_toasts_are_capped() -> void:
 	var main := _main()
 	for i in 6:
 		main.hud.toast("t%d" % i)
-	assert_true(main.hud._toasts.get_child_count() <= 3, "at most three toasts on screen")
+	assert_true(main.hud.toast_count() <= 3, "at most three toasts on screen")
+	assert_true(main.hud._toasts.get_child_count() <= 6, "fading ones don't pile up")
 	assert_eq(main.hud.toast_text(), "t5")
 	_free(main)
 

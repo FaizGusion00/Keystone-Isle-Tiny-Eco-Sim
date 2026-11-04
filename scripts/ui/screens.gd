@@ -76,6 +76,7 @@ func open(screen_name: String, data: Dictionary = {}, push := true) -> void:
 		_stack.append(current)
 	_data = data
 	current = screen_name
+	_cancel_fade()
 	visible = true
 	_build(screen_name)
 	opened.emit(screen_name)
@@ -92,15 +93,46 @@ func back() -> void:
 
 
 func close() -> void:
-	if not visible:
+	if not visible or current == "":
 		return
-	visible = false
-	current = ""
+	current = ""  # logically closed at once (is_open() is false); the sheet then fades out
 	_stack.clear()
-	if _content != null:
-		_content.queue_free()
-		_content = null
+	var c := _content
+	_content = null
+	if UiKit.reduce_motion or not is_inside_tree():
+		visible = false
+		if c != null:
+			c.queue_free()
+		closed.emit()
+		return
+	root.mouse_filter = Control.MOUSE_FILTER_IGNORE  # the game is usable while the sheet fades
+	if c != null:
+		_ignore_mouse(c)
+	var t := Motion.tween(root, "fade")
+	t.tween_property(root, "modulate:a", 0.0, Motion.FAST).set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_IN)
+	t.tween_callback(func() -> void:
+		visible = false
+		root.modulate.a = 1.0
+		root.mouse_filter = Control.MOUSE_FILTER_STOP
+		if c != null:
+			c.queue_free())
 	closed.emit()
+
+
+func _cancel_fade() -> void:
+	Motion.stop(root, "fade")
+	root.modulate.a = 1.0
+	root.mouse_filter = Control.MOUSE_FILTER_STOP
+	for ch in root.get_children():
+		if ch.has_meta("leaving"):
+			ch.queue_free()
+
+
+static func _ignore_mouse(n: Node) -> void:
+	if n is Control:
+		(n as Control).mouse_filter = Control.MOUSE_FILTER_IGNORE
+	for ch in n.get_children():
+		_ignore_mouse(ch)
 
 
 func _relayout() -> void:
@@ -118,8 +150,15 @@ func _build(screen_name: String, animate := true) -> void:
 	_shade.visible = screen_name == "menu" and not portrait
 	_backdrop.color = Color(0.09, 0.13, 0.15, 0.08 if screen_name == "menu" else 0.45)
 	if _content != null:
-		root.remove_child(_content)
-		_content.queue_free()
+		var old := _content
+		if animate and not UiKit.reduce_motion and is_inside_tree():
+			# cross-fade: the old sheet fades out under the new one (input goes to the new one)
+			old.set_meta("leaving", true)
+			_ignore_mouse(old)
+			Motion.disappear(old, Vector2.ZERO, Motion.FAST, func() -> void: old.queue_free())
+		else:
+			root.remove_child(old)
+			old.queue_free()
 	match screen_name:
 		"menu": _content = _menu(sz)
 		"campaign": _content = _campaign(sz, "campaign")
@@ -307,9 +346,25 @@ func _menu(sz: Vector2) -> Control:
 		holder.remove_child(col)
 		card.add_child(col)
 		holder.add_child(card)
+	# Quiet studio lockup beside the version line. Light type, because it sits on the sea.
+	var credit := UiKit.vbox(1)
+	var align := HORIZONTAL_ALIGNMENT_LEFT if portrait else HORIZONTAL_ALIGNMENT_RIGHT
+	var credit_lines: Array = [
+		["Developed by Faiz Nasir", Color(0.98, 0.96, 0.91, 0.94)],
+		["FG Universal Empire", Color(0.98, 0.96, 0.91, 0.72)],
+	]
+	for row in credit_lines:
+		var line := UiKit.label(row[0], 0, "Caption")
+		line.horizontal_alignment = align
+		line.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		line.add_theme_color_override("font_color", row[1])
+		credit.add_child(line)
 	var ver := UiKit.label(I18n.f("v%s · made with Godot", str(ProjectSettings.get_setting("application/config/version", "1.0"))), 0, "Caption")
-	ver.modulate.a = 0.7
-	holder.add_child(ver)
+	ver.horizontal_alignment = align
+	ver.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	ver.add_theme_color_override("font_color", Color(0.98, 0.96, 0.91, 0.55))
+	credit.add_child(ver)
+	holder.add_child(credit)
 	_post_fit = func() -> void:
 		if card != null:
 			card.reset_size()
@@ -317,11 +372,11 @@ func _menu(sz: Vector2) -> Control:
 		else:
 			col.reset_size()
 			col.position = Vector2(64, (sz.y - col.size.y) * 0.5)
-		ver.reset_size()
-		ver.position = Vector2(sz.x - ver.size.x - 20, sz.y - ver.size.y - 14) if not portrait else Vector2(16, 14)
-		# the island floats in the open space beside / above the menu
-		var free := Rect2(Vector2(16, 44), Vector2(sz.x - 32, card.position.y - 60)) if card != null \
-			else Rect2(Vector2(col.position.x + col.size.x + 24, 24), Vector2(sz.x - col.position.x - col.size.x - 48, sz.y - 48))
+		credit.reset_size()
+		credit.position = Vector2(16, 12) if portrait else Vector2(sz.x - credit.size.x - 22, sz.y - credit.size.y - 16)
+		# the island floats in the open space beside / above the menu, clear of the credit
+		var free := Rect2(Vector2(16, credit.position.y + credit.size.y + 8), Vector2(sz.x - 32, card.position.y - credit.size.y - 36)) if card != null \
+			else Rect2(Vector2(col.position.x + col.size.x + 24, 24), Vector2(sz.x - col.position.x - col.size.x - 48, credit.position.y - 40))
 		menu_free_rect = Rect2(free.position * ui_scale, free.size * ui_scale)
 		if main.has_method("frame_menu_view"):
 			main.frame_menu_view(menu_free_rect)

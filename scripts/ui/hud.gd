@@ -552,7 +552,7 @@ func set_status(ws: WorldState) -> void:
 	_chip("wood", "%d" % floori(ws.wood) if ws.free_build == false else "∞", false)
 	_chips["labor"]["panel"].tooltip_text = I18n.t("Labor: %d of %d. Spent by tools, regrows each day.") % [floori(ws.labor), roundi(lab_cap)]
 	var k := clampf(ws.keystone / 100.0, 0.0, 1.0)
-	_keystone_bar.value = k
+	Motion.meter_to(_keystone_bar, k, Motion.SLOW)
 	_keystone_value.text = "%d" % roundi(ws.keystone)
 	UiKit.set_meter_color(_keystone_bar, UiKit.CORAL if k < 0.4 else (UiKit.AMBER if k < 0.7 else UiKit.LEAF))
 	# weather on the day chip
@@ -572,16 +572,25 @@ func set_status(ws: WorldState) -> void:
 
 func _chip(key: String, text: String, warn: bool) -> void:
 	var c: Dictionary = _chips[key]
-	(c["value"] as Label).text = text
+	var val := c["value"] as Label
+	var old := val.text
+	val.text = text
+	if old != "" and old != text and visible:
+		# the number ticked: a small bump, tinted by direction (green up, coral down)
+		var up := text.to_float() > old.to_float()
+		val.pivot_offset = val.size * 0.5
+		Motion.pulse(val, 1.1, 0.26)
+		val.modulate = Color(0.75, 1.15, 0.8) if up else Color(1.25, 0.8, 0.75)
+		Motion.color_to(val, "modulate", Color.WHITE, Motion.SLOW)
 	var p := c["panel"] as PanelContainer
 	var want := "ChipWarn" if warn else "Chip"
 	if p.theme_type_variation != want:
 		p.theme_type_variation = want
 		if warn:
-			UiKit.pop(p, 0.3)
+			Motion.pulse(p, 1.12, 0.34)
 	var ic := c["icon"] as TextureRect
 	if ic != null:
-		ic.self_modulate = UiKit.CORAL if warn else UiKit.TEAL_DARK
+		Motion.color_to(ic, "self_modulate", UiKit.CORAL if warn else UiKit.TEAL_DARK, Motion.BASE)
 
 
 ## A small "+N" badge pops on a chip's top-right corner when that stock grows (harvest, new
@@ -755,7 +764,7 @@ func _arm_goal_collapse(mult: float = 1.0) -> void:
 	var token := _obj_arm_token
 	if is_inside_tree():
 		get_tree().create_timer(OBJ_AUTO_SECS * mult).timeout.connect(func() -> void:
-			if token == _obj_arm_token and not coach_active() and not popup.visible:
+			if token == _obj_arm_token and not coach_active() and not _popup_open:
 				set_goals_collapsed(true))
 
 
@@ -843,7 +852,7 @@ func update_objectives(sim: Simulation) -> void:
 		_obj_key = key  # a new run: show the full checklist, then fold it away
 		_obj_done = done
 		set_goals_collapsed(false)
-		if not popup.visible:  # an intro popup is up: start the fold timer once it's read
+		if not _popup_open:  # an intro popup is up: start the fold timer once it's read
 			_arm_goal_collapse()
 		_obj_status = sc.status
 	elif done > _obj_done or sc.status != _obj_status:
@@ -852,7 +861,7 @@ func update_objectives(sim: Simulation) -> void:
 			set_goals_collapsed(false)
 			_arm_goal_collapse()
 	elif not _obj_collapsed and sim.world.tick - _obj_arm_tick >= OBJ_AUTO_DAYS and not coach_active() \
-			and not popup.visible:
+			and not _popup_open:
 		set_goals_collapsed(true)
 	_obj_done = done
 
@@ -1204,7 +1213,10 @@ func select_tool(t: int) -> void:
 		_tool_page = t / _tool_per  # keyboard shortcut to a tool on another page: flip to it
 		relayout()
 	if t < _tool_buttons.size():
+		var was := _tool_buttons[t].button_pressed
 		_tool_buttons[t].set_pressed_no_signal(true)
+		if not was:
+			Motion.pulse(_tool_icon[t], 1.22, 0.3)
 	_style_tools()
 	tool_selected.emit(t)
 
@@ -1231,7 +1243,9 @@ func _update_costs(ws: WorldState) -> void:
 		var short := ws.labor + 1e-6 < c.x or ws.wood + 1e-6 < c.y
 		_tool_cost[t].text = txt
 		_tool_cost[t].set_meta("short", short)
-		_tool_buttons[t].self_modulate = Color(1, 1, 1, 0.6) if short else Color.WHITE
+		var want := Color(1, 1, 1, 0.6) if short else Color.WHITE
+		if _tool_buttons[t].self_modulate != want:
+			Motion.color_to(_tool_buttons[t], "self_modulate", want, Motion.BASE)
 	_style_tools()
 
 
@@ -1404,7 +1418,11 @@ func show_events(log_: EventLog, select_id: int = -1, limit: int = 60) -> void:
 		_events_list.add_child(empty)
 	for id in ids:
 		_events_list.add_child(_event_row(log_, id))
-	var was := events_panel.visible
+	var was := events_open()
+	_events_closed = false
+	Motion.stop(events_panel)
+	events_panel.remove_meta("closing")
+	events_panel.modulate.a = 1.0
 	events_panel.visible = true
 	if not was:
 		relayout()
@@ -1529,10 +1547,24 @@ func explanation_text() -> String:
 
 
 func hide_events() -> void:
-	if events_panel.visible:
+	if events_panel.visible and not events_panel.has_meta("closing"):
 		AudioDirector.sfx("ui_close", 1.0, -6.0)
-	events_panel.visible = false
-	relayout()
+	if not events_panel.visible:
+		return
+	_events_closed = true
+	if UiKit.reduce_motion or not is_inside_tree():
+		events_panel.visible = false
+		relayout()
+		return
+	events_panel.set_meta("closing", true)
+	Motion.disappear(events_panel, Vector2(0, 24) if portrait else Vector2(24, 0), Motion.FAST, func() -> void:
+		events_panel.remove_meta("closing")
+		relayout())
+
+
+## The history drawer is logically closed (it may still be fading out).
+func events_open() -> bool:
+	return events_panel.visible and not _events_closed
 
 
 # ================================================================== toasts
@@ -1568,22 +1600,54 @@ func toast(msg: String, seconds: float = 2.5, icon_name: String = "", bad: bool 
 	l.custom_minimum_size.x = minf(l.get_theme_font("font").get_string_size(msg, HORIZONTAL_ALIGNMENT_LEFT, -1, 17).x + 4.0,
 		minf(440.0, maxf(140.0, _stack.custom_minimum_size.x - 64.0)))
 	_toasts.add_child(p)
-	while _toasts.get_child_count() > _toast_room:
-		var old := _toasts.get_child(0)
-		_toasts.remove_child(old)
-		old.queue_free()
+	var live := 0
+	for t in _toasts.get_children():
+		if not t.has_meta("leaving"):
+			live += 1
+	for t in _toasts.get_children():
+		if live <= _toast_room:
+			break
+		if t.has_meta("leaving"):
+			continue
+		# too many: the oldest fades out quickly instead of vanishing mid-read
+		t.set_meta("leaving", true)
+		live -= 1
+		var gone := t as Control
+		Motion.disappear(gone, Vector2.ZERO, Motion.FAST, func() -> void: gone.queue_free())
+	var leaving := 0
+	for t in _toasts.get_children():
+		if t.has_meta("leaving") and not t.is_queued_for_deletion():
+			leaving += 1
+			if leaving > 2:  # a burst of toasts: don't let fading ones pile up
+				_toasts.remove_child(t)
+				t.queue_free()
 	# fade only: the VBox owns the position, a position tween would fight its layout
-	var tw := p.create_tween()
+	var tw := Motion.tween(p)
 	if not UiKit.reduce_motion:
 		p.modulate.a = 0.0
-		tw.tween_property(p, "modulate:a", 1.0, 0.18)
+		p.pivot_offset = Vector2(0, 0)
+		p.scale = Vector2(0.94, 0.94)
+		tw.set_parallel(true)
+		tw.tween_property(p, "modulate:a", 1.0, Motion.BASE)
+		tw.tween_property(p, "scale", Vector2.ONE, Motion.SLOW).set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT)
+		tw.set_parallel(false)
 	tw.tween_interval(seconds)
-	tw.tween_property(p, "modulate:a", 0.0, 0.3)
+	tw.tween_callback(func() -> void: p.set_meta("leaving", true))
+	tw.tween_property(p, "modulate:a", 0.0, Motion.SLOW).set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_IN)
 	tw.tween_callback(p.queue_free)
 
 
 func toast_text() -> String:
 	return _last_toast
+
+
+## Toasts on screen that are not already fading out.
+func toast_count() -> int:
+	var n := 0
+	for t in _toasts.get_children():
+		if not t.has_meta("leaving") and not t.is_queued_for_deletion():
+			n += 1
+	return n
 
 
 func _build_award() -> void:
@@ -1706,7 +1770,7 @@ func _build_popup() -> void:
 
 ## Shows a popup; if one is already open, this one is queued and appears after OK.
 func show_popup(title: String, body: String, icon_name: String = "") -> void:
-	if popup.visible:
+	if _popup_open:
 		_popup_queue.append(PackedStringArray([title, body, icon_name]))
 		return
 	_popup_title.text = title
@@ -1719,22 +1783,48 @@ func show_popup(title: String, body: String, icon_name: String = "") -> void:
 		elif title.begins_with("While you were away"):
 			icon_name = "history"
 	(_popup_icon.get_child(0) as TextureRect).texture = UiKit.icon_tex(icon_name)
+	_popup_open = true
+	Motion.stop(popup)
+	Motion.stop(_scrim, "color")
+	popup.modulate.a = 1.0
+	var was_dimmed := _scrim.visible
 	popup.visible = true
 	_scrim.visible = true
+	_scrim.mouse_filter = Control.MOUSE_FILTER_STOP
 	relayout()
+	if not was_dimmed:
+		_scrim.modulate.a = 0.0
+		Motion.color_to(_scrim, "modulate", Color.WHITE, Motion.BASE)
 	UiKit.appear(popup, Vector2(0, 24), 0.24)
 	AudioDirector.sfx("notify", 1.0, -4.0)
 
 
+func popup_open() -> bool:
+	return _popup_open
+
+
 func dismiss_popup() -> void:
-	popup.visible = false
-	_scrim.visible = false
-	if _obj_card != null and not _obj_collapsed and _popup_queue.is_empty():
-		_arm_goal_collapse()  # the goals were held open under the popup; fold them later from now
+	if not _popup_open:
+		return
+	_popup_open = false
 	if not _popup_queue.is_empty():
 		var next: PackedStringArray = _popup_queue.pop_front()
 		show_popup(next[0], next[1], next[2] if next.size() > 2 else "")
-	elif _coach_pending:
+		return
+	_scrim.mouse_filter = Control.MOUSE_FILTER_IGNORE  # the map is usable while the card fades
+	Motion.disappear(popup, Vector2(0, 14), Motion.FAST)
+	Motion.color_to(_scrim, "modulate", Color(1, 1, 1, 0), Motion.FAST)
+	if UiKit.reduce_motion or not is_inside_tree():
+		_scrim.visible = false
+		_scrim.modulate.a = 1.0
+	else:
+		get_tree().create_timer(Motion.FAST + 0.02).timeout.connect(func() -> void:
+			if not _popup_open:
+				_scrim.visible = false
+				_scrim.modulate.a = 1.0)
+	if _obj_card != null and not _obj_collapsed and _popup_queue.is_empty():
+		_arm_goal_collapse()  # the goals were held open under the popup; fold them later from now
+	if _coach_pending:
 		_coach_pending = false
 		start_coach()
 
@@ -1742,17 +1832,24 @@ func dismiss_popup() -> void:
 func clear_popups() -> void:
 	_popup_queue.clear()
 	_coach_pending = false
+	_popup_open = false
+	Motion.stop(popup)
+	Motion.stop(_scrim, "color")
 	popup.visible = false
+	popup.modulate.a = 1.0
 	_scrim.visible = false
+	_scrim.modulate.a = 1.0
 
 
 func popup_text() -> String:
-	return _popup_title.text + "\n" + _popup_body.text if popup.visible else ""
+	return _popup_title.text + "\n" + _popup_body.text if _popup_open else ""
 
 
 # ================================================================== coach marks
 
 var _coach_pending := false
+var _popup_open := false
+var _events_closed := true
 
 
 func _build_coach() -> void:
@@ -1802,7 +1899,7 @@ func _build_coach() -> void:
 
 ## Coach marks open after the current popup (tutorial intro) is dismissed.
 func queue_coach() -> void:
-	if popup.visible:
+	if _popup_open:
 		_coach_pending = true
 	else:
 		start_coach()
