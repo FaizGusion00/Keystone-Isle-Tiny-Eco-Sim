@@ -1265,7 +1265,9 @@ func can_apply(action: int, x: int, y: int) -> String:
 ## so planting then clearing the same tile is not a free wood source.
 static func wood_yield(cover: float) -> float:
 	var mature := clampf((cover - WOOD_MATURE_FROM) / (WOOD_MATURE_AT - WOOD_MATURE_FROM), 0.0, 1.0)
-	return floorf(WOOD_PER_FOREST * mature)
+	# Cover 0.7 is halfway and should be 2 logs, but (0.7−0.6)/0.2 is 1.999… in binary.
+	# Flooring that drops a whole log. The bias is far smaller than one log.
+	return floorf(WOOD_PER_FOREST * mature + 1e-4)
 
 
 ## Applies a player action between ticks. Returns true on success.

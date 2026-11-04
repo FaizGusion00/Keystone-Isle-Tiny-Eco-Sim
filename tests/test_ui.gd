@@ -72,6 +72,7 @@ func test_toolbar_shows_costs_and_inspector_and_why_chain() -> void:
 	main.select_tile(v)
 	assert_true(main.hud.inspector_visible(), "inspector slides in")
 	assert_true(main.hud.tile_text(main.sim, v).contains("Village"), main.hud.tile_text(main.sim, v))
+	assert_true(main.hud._insp_sub.text.ends_with("tile %d, %d" % [v.x, v.y]), main.hud._insp_sub.text)
 	main.select_tile(Vector2i(-1, -1))
 	# why-chain: find any event with a recorded cause and explain it in the drawer
 	var pick := -1

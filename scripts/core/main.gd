@@ -42,6 +42,10 @@ var _menu_pan := 0.0
 var _speed_before_pause := SimClock.Speed.NORMAL
 
 
+signal action_done(action: int, tile: Vector2i)
+signal action_failed(action: int, tile: Vector2i, why: String)
+
+
 func _ready() -> void:
 	# Desktop window close goes through quit_game() so audio is released cleanly first.
 	get_tree().set_auto_accept_quit(false)
@@ -58,7 +62,8 @@ func _ready() -> void:
 	hud.tutorial_requested.connect(start_tutorial)
 	hud.menu_requested.connect(pause_game)
 	hud.tile_closed.connect(func() -> void: select_tile(Vector2i(-1, -1)))
-	hud.tool_selected.connect(func(_t: int) -> void: AudioDirector.sfx("ui_click"))
+	hud.tool_selected.connect(_on_tool_selected)
+	camera.hover_moved.connect(_on_hover)
 	audio = AudioDirector.new()
 	audio.name = "Audio"
 	add_child(audio)
@@ -348,6 +353,8 @@ func _on_screen_changed(screen_name: String) -> void:
 	clock.held = open
 	camera.input_enabled = not open
 	hud.visible = not open
+	if open:
+		_clear_preview()
 	if open and screen_name == "menu":
 		select_tile(Vector2i(-1, -1))
 	if not open and not _menu_view.is_empty():
@@ -436,6 +443,8 @@ func set_simulation(s: Simulation) -> void:
 	hud.set_day(sim.world.tick)
 	hud.set_status(sim.world)
 	select_tile(Vector2i(-1, -1))
+	_clear_preview()
+	refresh_placement()
 
 
 func set_speed(s: int) -> void:
@@ -460,33 +469,135 @@ func _on_tile_tapped(screen_pos: Vector2) -> void:
 	hud.world_touched()
 	var t := pick_tile(screen_pos)
 	if not sim.world.in_bounds(t.x, t.y):
+		_clear_preview()
 		select_tile(Vector2i(-1, -1))
 		return
 	var action := _action_for_tool(hud.tool)
-	if action != Simulation.Action.NONE:
-		var why := placement_reason(action, t)
-		if why != "":
-			hud.toast(why, 2.5, "circle-x", true)
-			AudioDirector.sfx("ui_error")
-			UiKit.haptic(40)
-		else:
-			var labor0 := sim.world.labor
-			var wood0 := sim.world.wood
-			sim.apply_action(action, t.x, t.y)
-			world_view.refresh()
-			ambience.pop(t)
-			ambience.float_text(t, _delta_text(sim.world.labor - labor0, sim.world.wood - wood0),
-				Color(1.0, 0.93, 0.80))
-			AudioDirector.sfx(ACTION_SFX.get(action, "build"), randf_range(0.94, 1.06))
-			UiKit.haptic(18)
-			hud.set_status(sim.world)
-			hud.update_objectives(sim)
-			if action == Simulation.Action.BUILD_FARM and sim.world.count_structures(WorldState.Structure.FARM) == 1:
-				hud.toast("Farm built! Its first harvest comes in about %d days." % int(Simulation.CROP_DAYS), 4.0, "wheat")
-			_warn_floodplain(action, t)
-	else:
+	if action == Simulation.Action.NONE:
 		AudioDirector.sfx("ui_click", 1.1, -6.0)
+		select_tile(t)
+		return
+	# on a touch screen a big build is previewed first: tap once to see it, again to build
+	if camera.last_was_touch and action in CONFIRM_ACTIONS and _preview != t:
+		_show_preview(action, t, screen_pos)
+		return
+	_clear_preview()
+	try_action(action, t)
+
+
+## Applies `action` on tile `t` with all feedback (or explains why not). Returns true if done.
+func try_action(action: int, t: Vector2i) -> bool:
+	var why := placement_reason(action, t)
+	if why != "":
+		hud.toast(why, 2.5, "circle-x", true)
+		hud.shake_place_tag()
+		AudioDirector.sfx("ui_error")
+		UiKit.haptic(40)
+		action_failed.emit(action, t, why)
+		select_tile(t)
+		return false
+	var labor0 := sim.world.labor
+	var wood0 := sim.world.wood
+	var before := world_view.capture_tile(t)
+	sim.apply_action(action, t.x, t.y)
+	world_view.refresh()
+	world_view.animate_change(t, action, before)
+	ambience.pop(t)
+	ambience.float_text(t, _delta_text(sim.world.labor - labor0, sim.world.wood - wood0),
+		Color(1.0, 0.93, 0.80))
+	AudioDirector.sfx(ACTION_SFX.get(action, "build"), randf_range(0.94, 1.06))
+	UiKit.haptic(18)
+	hud.set_status(sim.world)
+	hud.update_objectives(sim)
+	if action == Simulation.Action.BUILD_FARM and sim.world.count_structures(WorldState.Structure.FARM) == 1:
+		hud.toast(I18n.f("Farm built! Its first harvest comes in about %d days.", int(Simulation.CROP_DAYS)), 4.0, "wheat")
+	_warn_floodplain(action, t)
+	action_done.emit(action, t)
+	if action in REVERT_ACTIONS and not Input.is_key_pressed(KEY_SHIFT):
+		hud.select_tool(Hud.Tool.INSPECT)  # one big build per pick: the next tap only looks
+	else:
+		refresh_placement()
 	select_tile(t)
+	return true
+
+
+## Big, deliberate builds: previewed before building on touch, and the tool drops back to
+## Inspect afterwards (hold Shift to keep it). Clear / Plant / Restore stay picked for painting.
+const CONFIRM_ACTIONS := [Simulation.Action.BUILD_FARM, Simulation.Action.BUILD_HOUSE,
+	Simulation.Action.BUILD_DAM, Simulation.Action.DEMOLISH]
+const REVERT_ACTIONS := CONFIRM_ACTIONS
+
+var _preview := Vector2i(-1, -1)
+var _place_refresh_at := 0.0
+
+
+func _show_preview(action: int, t: Vector2i, screen_pos: Vector2) -> void:
+	_preview = t
+	var info := place_info(action, t)
+	world_view.placement.set_hover(t, info[0])
+	hud.show_place_tag(screen_pos, I18n.f("Tap again to build · %s", info[1]) if info[0] else info[1], info[0])
+	if not info[0]:
+		hud.shake_place_tag()
+		AudioDirector.sfx("ui_error", 1.0, -6.0)
+	else:
+		AudioDirector.sfx("ui_click", 1.2, -4.0)
+	select_tile(t)
+
+
+func _clear_preview() -> void:
+	_preview = Vector2i(-1, -1)
+	world_view.placement.set_hover(Vector2i(-1, -1), false)
+	hud.hide_place_tag()
+
+
+## [ok, text] for the placement tag: the cost if allowed, else the reason.
+func place_info(action: int, t: Vector2i) -> Array:
+	var why := placement_reason(action, t)
+	if why != "":
+		return [false, why]
+	var c := sim.action_cost(action)
+	var cost := hud.cost_text(c)
+	if action in [Simulation.Action.BUILD_FARM, Simulation.Action.BUILD_HOUSE] \
+			and sim.flood_risk(sim.world.index(t.x, t.y)) == 2:
+		return [true, I18n.f("%s · may flood", cost)]
+	return [true, cost]
+
+
+## The mouse moved over the map: ghost + tag for the tile under it (build tools only).
+func _on_hover(screen_pos: Vector2) -> void:
+	if sim == null or screens.is_open():
+		return
+	var action := _action_for_tool(hud.tool)
+	if action == Simulation.Action.NONE:
+		return
+	var t := pick_tile(screen_pos)
+	if not sim.world.in_bounds(t.x, t.y):
+		world_view.placement.set_hover(Vector2i(-1, -1), false)
+		hud.hide_place_tag()
+		return
+	var info := place_info(action, t)
+	world_view.placement.set_hover(t, info[0])
+	hud.show_place_tag(screen_pos, info[1], info[0])
+
+
+## Recompute where the selected tool can be used (on tool change, after building, and as the
+## island changes; throttled while time runs).
+func refresh_placement() -> void:
+	if sim == null:
+		return
+	var action := _action_for_tool(hud.tool)
+	if action == Simulation.Action.NONE:
+		world_view.placement.clear()
+		hud.hide_place_tag()
+		return
+	world_view.placement.set_mask(action, ValidTiles.compute(sim, action))
+	_place_refresh_at = Time.get_ticks_msec() / 1000.0
+
+
+func _on_tool_selected(_t: int) -> void:
+	AudioDirector.sfx("ui_click")
+	_clear_preview()
+	refresh_placement()
 
 
 ## Why `action` can't be done on tile `t` ("" if it can), in the player's language.
@@ -497,11 +608,13 @@ func placement_reason(action: int, t: Vector2i) -> String:
 ## "−1 labor  −2 wood" (or "+3 wood" when clearing forest) for the floater over a placed tile.
 static func _delta_text(d_labor: float, d_wood: float) -> String:
 	var parts: PackedStringArray = []
-	for pair in [[d_labor, "labor"], [d_wood, "wood"]]:
-		var d := roundi(float(pair[0]))
-		if d != 0:
-			parts.append("%s%d %s" % ["+" if d > 0 else "−", absi(d), pair[1]])
-	return "  ".join(parts)
+	var dl := roundi(d_labor)
+	var dw := roundi(d_wood)
+	if dl != 0:
+		parts.append(I18n.f("%s%d labor", ["+" if dl > 0 else "−", absi(dl)]))
+	if dw != 0:
+		parts.append(I18n.f("%s%d wood", ["+" if dw > 0 else "−", absi(dw)]))
+	return I18n.done("  ".join(parts))
 
 
 ## Building on a low river bank is allowed (fertile silt!) but the player should know the risk.
@@ -509,7 +622,7 @@ func _warn_floodplain(action: int, t: Vector2i) -> void:
 	if action != Simulation.Action.BUILD_FARM and action != Simulation.Action.BUILD_HOUSE:
 		return
 	if sim.flood_risk(sim.world.index(t.x, t.y)) == 2:
-		hud.toast("Built on a floodplain: the river may flood it in storms. Forests and dams upstream help.", 4.0, "waves", true)
+		hud.toast(I18n.t("Built on a floodplain: the river may flood it in storms. Forests and dams upstream help."), 4.0, "waves", true)
 
 
 const ACTION_SFX := {
@@ -554,6 +667,8 @@ func _toast_new_events() -> void:
 
 func _on_ticked(count: int) -> void:
 	_refresh_ui()
+	if world_view.placement.visible and Time.get_ticks_msec() / 1000.0 - _place_refresh_at > 0.5:
+		refresh_placement()  # the island changed under the overlay (labor regrew, trees grew…)
 	_toast_new_events()
 	_check_scenario()
 	_check_achievements(false)

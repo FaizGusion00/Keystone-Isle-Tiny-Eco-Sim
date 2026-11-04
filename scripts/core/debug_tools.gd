@@ -128,6 +128,28 @@ static func handle_cmdline(main: Node) -> void:
 			var p: PackedStringArray = String(args["select"]).split(",")
 			st = Vector2i(int(p[0]), int(p[1]))
 		main.select_tile(st)
+	if args.has("tool"):  # --tool=farm|house|dam|clear|plant|restore|remove
+		var names := {"inspect": 0, "clear": 1, "plant": 2, "farm": 3, "house": 4, "dam": 5, "restore": 6, "remove": 7}
+		main.hud.select_tool(int(names.get(String(args["tool"]), 0)))
+	if args.has("hover"):  # --hover=x,y : ghost + tag on that tile, as the mouse would show
+		var ht := Vector2i.ZERO
+		if String(args["hover"]) == "best":  # the first tile the selected tool may use, nearest the village
+			var vc: Vector2i = main.sim.world.coords(main.sim.world.settlement_index)
+			var best := 1 << 30
+			var m: PackedByteArray = main.world_view.placement.mask
+			for i in m.size():
+				var q: Vector2i = main.sim.world.coords(i)
+				var dd := absi(q.x - vc.x) + absi(q.y - vc.y)
+				if m[i] == ValidTiles.OK and dd < best:
+					best = dd
+					ht = q
+		else:
+			var hp: PackedStringArray = String(args["hover"]).split(",")
+			ht = Vector2i(int(hp[0]), int(hp[1]))
+		var wv: WorldView = main.world_view
+		await main.get_tree().process_frame
+		await main.get_tree().process_frame
+		main._on_hover(main.get_viewport().get_canvas_transform() * wv.to_global(wv.top_center(ht.x, ht.y)))
 	if args.has("perf"):
 		_perf(main, int(args["perf"]))
 	elif args.has("screenshot"):

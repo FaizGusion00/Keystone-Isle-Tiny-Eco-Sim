@@ -63,6 +63,12 @@ func test_planting_then_clearing_gives_no_wood() -> void:
 	assert_true(sim.apply_action(A.CLEAR_TREES, g.x, g.y), "young forest can still be cleared")
 	assert_near(ws.wood, w0, 1e-6, "no wood from a sapling stand")
 	assert_eq(Simulation.wood_yield(0.9), Simulation.WOOD_PER_FOREST)
+	assert_eq(Simulation.wood_yield(0.60), 0.0, "not yet mature")
+	assert_eq(Simulation.wood_yield(0.65), 1.0)
+	assert_eq(Simulation.wood_yield(0.70), 2.0, "halfway must not floor down to 1")
+	assert_eq(Simulation.wood_yield(0.75), 3.0)
+	assert_eq(Simulation.wood_yield(0.79), 3.0, "still short of a full stand")
+	assert_eq(Simulation.wood_yield(0.80), Simulation.WOOD_PER_FOREST)
 
 
 func test_tool_rules() -> void:

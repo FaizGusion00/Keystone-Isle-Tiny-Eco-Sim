@@ -57,17 +57,23 @@ func test_switching_language_live() -> void:
 		main.hud.end_coach()
 	await main.get_tree().process_frame
 	var nodes0: int = main.get_tree().get_node_count()
+	var tile: Vector2i = main.sim.world.coords(main.sim.world.settlement_index)
+	main.select_tile(tile)
+	var where := "tile %d, %d" % [tile.x, tile.y]
+	assert_true(main.hud._insp_sub.text.ends_with(where), main.hud._insp_sub.text)
 	main.settings.values["language"] = "ms"
 	main.apply_settings()
 	assert_eq(I18n.current(), "ms")
 	assert_eq(main.hud.tr("Farm"), "Ladang", "tool label translated")
 	assert_true(main.hud._day_label.text.begins_with("Hari"), main.hud._day_label.text)
+	assert_true(main.hud._insp_sub.text.ends_with("petak %d, %d" % [tile.x, tile.y]), main.hud._insp_sub.text)
 	main.pause_game()
 	main.screens.open("settings")
 	main.settings.values["language"] = "en"
 	main.apply_settings()
 	assert_eq(I18n.current(), "en")
 	assert_true(main.hud._day_label.text.begins_with("Day"), main.hud._day_label.text)
+	assert_true(main.hud._insp_sub.text.ends_with(where), main.hud._insp_sub.text)
 	main.screens.close()
 	await main.get_tree().process_frame
 	await main.get_tree().process_frame

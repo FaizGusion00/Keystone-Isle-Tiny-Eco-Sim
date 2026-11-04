@@ -4,6 +4,7 @@ extends Camera2D
 ## A press+release without moving past TAP_SLOP emits tile_tapped(screen_pos).
 
 signal tile_tapped(screen_pos: Vector2)
+signal hover_moved(screen_pos: Vector2)  ## a real mouse moved over the map without a button down
 
 const MIN_ZOOM := 0.35
 const MAX_ZOOM := 4.0
@@ -20,6 +21,7 @@ var _touch_dragged := false
 var _pinch_dist := 0.0
 var _pinch_zoom := 1.0
 var input_enabled := true      ## false while a full-screen menu is open
+var last_was_touch := false    ## the latest map input came from a finger (taps preview first)
 var user_moved := false        ## the player panned or zoomed since the last automatic framing
 var smooth := true             ## eased wheel/key zoom and glides (off with reduce motion)
 var _zoom_target := 0.0        ## 0 = no zoom animation running
@@ -135,9 +137,12 @@ func _unhandled_input(event: InputEvent) -> void:
 		_glide_to = Vector2.INF
 		if event.is_pressed() or event is InputEventScreenDrag:
 			fling = Vector2.ZERO
+	if event is InputEventScreenTouch or event is InputEventScreenDrag:
+		last_was_touch = true
 	if event is InputEventMouseButton:
 		if event.device == InputEvent.DEVICE_ID_EMULATION:
 			return # touch is handled via ScreenTouch/ScreenDrag
+		last_was_touch = false
 		var mb := event as InputEventMouseButton
 		if mb.pressed and mb.button_index == MOUSE_BUTTON_WHEEL_UP:
 			zoom_smooth(mb.position, 1.12)
@@ -155,7 +160,11 @@ func _unhandled_input(event: InputEvent) -> void:
 					release_drag()
 				_mouse_down = false
 	elif event is InputEventMouseMotion:
-		if event.device == InputEvent.DEVICE_ID_EMULATION or not _mouse_down:
+		if event.device == InputEvent.DEVICE_ID_EMULATION:
+			return
+		if not _mouse_down:
+			last_was_touch = false
+			hover_moved.emit((event as InputEventMouseMotion).position)
 			return
 		var mm := event as InputEventMouseMotion
 		if not _mouse_dragged and mm.position.distance_to(_press_pos) > TAP_SLOP:

@@ -81,6 +81,21 @@ static func _play(main: Node) -> void:
 	ws.labor = 200.0
 	ws.wood = 99.0
 	var A := Simulation.Action
+	# placement tags, previews and action feedback (first farm, floodplain, cost floaters)
+	for a in [A.BUILD_FARM, A.BUILD_HOUSE, A.BUILD_DAM, A.CLEAR_TREES, A.PLANT_TREES, A.RESTORE_LAND, A.DEMOLISH]:
+		var shown := 0
+		for y in ws.height:
+			for x in ws.width:
+				if shown < 2 and (shown == 0 or sim.tile_rule(a, x, y) == ""):
+					main._show_preview(a, Vector2i(x, y), Vector2(200, 200))
+					walk(main)
+					shown += 1
+	main._clear_preview()
+	for y in ws.height:
+		for x in ws.width:
+			if ws.count_structures(WorldState.Structure.FARM) == 0 and sim.can_apply(A.BUILD_FARM, x, y) == "":
+				main.try_action(A.BUILD_FARM, Vector2i(x, y))
+				walk(main)
 	var built := 0
 	var cleared := 0
 	for y in ws.height:

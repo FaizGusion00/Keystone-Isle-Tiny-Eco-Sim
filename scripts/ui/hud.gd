@@ -211,6 +211,7 @@ func _ready() -> void:
 	_build_events_panel()
 	_build_toasts()
 	_build_award()
+	_build_place_tag()
 	_build_popup()
 	_build_coach()
 	for owned in [_inspector, _legend, events_panel, popup, _coach_card, _side]:
@@ -885,6 +886,7 @@ func _build_inspector() -> void:
 	_insp_title = UiKit.label("Tile inspector", 22, "Heading")
 	tcol.add_child(_insp_title)
 	_insp_sub = UiKit.label("", 0, "Caption")
+	_insp_sub.auto_translate_mode = Node.AUTO_TRANSLATE_MODE_DISABLED  # composed in show_tile
 	tcol.add_child(_insp_sub)
 	var close := UiKit.icon_button("x", "Close")
 	close.custom_minimum_size = Vector2(48, 48)
@@ -927,7 +929,7 @@ func show_tile(sim: Simulation, t: Vector2i) -> void:
 	var i := ws.index(t.x, t.y)
 	var info := tile_header(sim, t)
 	_insp_title.text = info[0]
-	_insp_sub.text = I18n.t(str(info[1]))
+	_insp_sub.text = I18n.done(I18n.t("%s · tile %d, %d") % [I18n.t(str(info[1])), t.x, t.y])
 	(_insp_badge.get_child(0) as TextureRect).texture = UiKit.icon_tex(info[2])
 	var rows := tile_rows(sim, t)
 	while _insp_rows.get_child_count() < rows.size():
@@ -1214,6 +1216,9 @@ func select_tool(t: int) -> void:
 		relayout()
 	if t < _tool_buttons.size():
 		var was := _tool_buttons[t].button_pressed
+		for k in _tool_buttons.size():
+			if k != t:
+				_tool_buttons[k].set_pressed_no_signal(false)
 		_tool_buttons[t].set_pressed_no_signal(true)
 		if not was:
 			Motion.pulse(_tool_icon[t], 1.22, 0.3)
@@ -1734,6 +1739,70 @@ func notification_rects() -> Array[Rect2]:
 		if c is Control and (c as Control).visible and not c.is_queued_for_deletion():
 			out.append((c as Control).get_global_rect())
 	return out
+
+
+# ================================================================== placement tag
+
+var _place_tag: PanelContainer
+var _place_label: Label
+var _place_icon: TextureRect
+
+
+func _build_place_tag() -> void:
+	_place_tag = UiKit.card("Chip")
+	_place_tag.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_place_tag.visible = false
+	var row := UiKit.hbox(6)
+	_place_tag.add_child(row)
+	_place_icon = UiKit.icon("check", 18, UiKit.TEAL)
+	row.add_child(_place_icon)
+	_place_label = UiKit.label("", 15)
+	row.add_child(_place_label)
+	root.add_child(_place_tag)
+
+
+## The small tag beside the cursor / finger: cost when the tool can be used there, else why not.
+func show_place_tag(screen_pos: Vector2, text: String, ok: bool) -> void:
+	_place_label.text = text
+	_place_icon.texture = UiKit.icon_tex("check" if ok else "circle-x")
+	_place_icon.self_modulate = UiKit.TEAL if ok else UiKit.CORAL
+	_place_tag.theme_type_variation = "Chip" if ok else "ChipWarn"
+	_place_tag.reset_size()
+	var p := screen_pos / root.get_global_transform_with_canvas().get_scale() - root.global_position
+	var sz := _place_tag.get_combined_minimum_size()
+	var lim := root.size - sz - Vector2(8, 8)
+	var at := (p + Vector2(18, -sz.y - 14)).clamp(Vector2(8, 8), lim.max(Vector2(8, 8)))
+	if not _place_tag.visible:
+		_place_tag.visible = true
+		_place_tag.position = at
+		_place_tag.modulate.a = 0.0
+		Motion.color_to(_place_tag, "modulate", Color.WHITE, Motion.FAST)
+	else:
+		_place_tag.position = at
+
+
+func hide_place_tag() -> void:
+	if _place_tag != null:
+		Motion.stop(_place_tag, "color")
+		_place_tag.visible = false
+
+
+func place_tag_text() -> String:
+	return _place_label.text if _place_tag != null and _place_tag.visible else ""
+
+
+func shake_place_tag() -> void:
+	if _place_tag != null and _place_tag.visible:
+		Motion.shake(_place_tag)
+
+
+## "3 labor · 2 wood" / "1 labor" / "free".
+func cost_text(c: Vector2) -> String:
+	if c == Vector2.ZERO:
+		return I18n.t("free")
+	if c.y <= 0.0:
+		return I18n.f("%s labor", _num(c.x))
+	return I18n.f("%s labor · %s wood", [_num(c.x), _num(c.y)])
 
 
 # ================================================================== popup

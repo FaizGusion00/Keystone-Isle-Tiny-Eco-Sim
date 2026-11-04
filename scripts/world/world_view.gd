@@ -77,6 +77,7 @@ var _shade := PackedFloat32Array()     ## per-corner light factor from the local
 var _corner_fill := PackedByteArray()  ## per water tile: concave shore corners to fill
 var _cur := PackedVector2Array()       ## top face of the tile being drawn
 var highlight: TileHighlight
+var placement: PlacementOverlay
 var water: Node2D
 var _water_mat: ShaderMaterial
 var _world_mat: ShaderMaterial
@@ -96,6 +97,12 @@ func _ready() -> void:
 	water.z_index = -1
 	water.draw.connect(_draw_water)
 	add_child(water)
+	placement = PlacementOverlay.new()
+	placement.name = "Placement"
+	placement.view = self
+	placement.z_index = 9
+	placement.visible = false
+	add_child(placement)
 	highlight = TileHighlight.new()
 	highlight.view = self
 	highlight.z_index = 10
@@ -140,7 +147,9 @@ func set_world(ws: WorldState, ev: EventLog = null) -> void:
 			c.y1 = mini(c.y0 + CHUNK, ws.height)
 			add_child(c)
 			_chunks.append(c)
+	move_child(placement, -1)
 	move_child(highlight, -1)
+	placement.clear()
 	_data_img = Image.create(ws.width, ws.height, false, Image.FORMAT_RGBA8)
 	_data_tex = ImageTexture.create_from_image(_data_img)
 	_data_bytes.resize(n * 4)
@@ -832,6 +841,16 @@ static func _bezier(a: Vector2, c: Vector2, b: Vector2) -> PackedVector2Array:
 		var t := s / 6.0
 		pts.append(a.lerp(c, t).lerp(c.lerp(b, t), t))
 	return pts
+
+
+## Snapshot of what is drawn on a tile, taken before an action changes it (for world animation).
+func capture_tile(_t: Vector2i) -> Array:
+	return []
+
+
+## Animate a tile that an action just changed (see WorldFx).
+func animate_change(_t: Vector2i, _action: int, _before: Array) -> void:
+	pass
 
 
 func sprite(cv: CanvasItem, name: String, at: Vector2, mod: Color = Color.WHITE, s: float = 1.0, flip := false) -> void:
