@@ -52,6 +52,25 @@ func test_clearing_forest_yields_wood_and_labor_regenerates() -> void:
 	assert_near(ws.labor, ws.villagers * Simulation.LABOR_PER_VILLAGER, 1e-3)
 
 
+func test_planting_then_clearing_gives_no_wood() -> void:
+	var sim := Simulation.create(12345, 32)
+	var ws := sim.world
+	var g := _find(sim, func(q: Vector2i) -> bool:
+		var i := ws.index(q.x, q.y)
+		return ws.land_type[i] == LandType.GRASSLAND and ws.structure[i] == 0 and sim.tile_rule(A.PLANT_TREES, q.x, q.y) == "")
+	assert_true(sim.apply_action(A.PLANT_TREES, g.x, g.y))
+	var w0 := ws.wood
+	assert_true(sim.apply_action(A.CLEAR_TREES, g.x, g.y), "young forest can still be cleared")
+	assert_near(ws.wood, w0, 1e-6, "no wood from a sapling stand")
+	assert_eq(Simulation.wood_yield(0.9), Simulation.WOOD_PER_FOREST)
+	assert_eq(Simulation.wood_yield(0.60), 0.0, "not yet mature")
+	assert_eq(Simulation.wood_yield(0.65), 1.0)
+	assert_eq(Simulation.wood_yield(0.70), 2.0, "halfway must not floor down to 1")
+	assert_eq(Simulation.wood_yield(0.75), 3.0)
+	assert_eq(Simulation.wood_yield(0.79), 3.0, "still short of a full stand")
+	assert_eq(Simulation.wood_yield(0.80), Simulation.WOOD_PER_FOREST)
+
+
 func test_tool_rules() -> void:
 	var sim := Simulation.create(12345, 32)
 	var ws := sim.world

@@ -19,22 +19,51 @@ godot --path . --import        # first time only (builds .godot/ cache)
 godot --path .                 # play
 godot --path . --editor        # open editor
 ```
-**Version 1.0.0.** The game opens on a title screen: Continue · New island (seed, size, terrain) ·
-Campaign (6 chapters) · Challenges (4) · Load (3 save slots + autosave) · Achievements · Settings.
+**Version 1.0.0.** The very first launch asks for the language once, then opens the guided
+first island right on the map. Later launches open a title screen that only lists what is open
+so far: Continue / Start · Campaign (6 islands) · Daily · Weekly · Endless and New world (after
+island 1) · Challenges (after island 2) · Load (when a slot is saved) · Journal · Settings · Help.
+
+First island (guided, "do it yourself"): tap the village → see the food → pick Farm → build on a
+green tile → press Play → watch the crop → first harvest → tap People for the growth checklist →
+second farm → the village grows → goals → History. Each step waits for the action; time only
+runs on "watch" steps; it can be skipped, and it resumes on the same step after a restart.
+Tools and top-bar numbers open step by step (island 1: Inspect + Farm; island 2 adds Clear,
+Plant, House, Remove; later islands everything).
 
 Controls (touch and mouse/keyboard):
 - Tap/click a tile to inspect it (slide-in inspector with stats and "Why?" cause chains);
-  drag to pan; pinch / mouse wheel / `+` `-` to zoom; arrow keys pan.
-- Bottom toolbar: Inspect · Clear trees · Plant · Farm · House · Dam · Restore · Remove
-  (keys `1`–`8`). Side buttons: Layers (overlays, `L`) and History (event log, `H`).
-- Top bar: day/season chip, Pause / 1× / 4× / 16× (`Space` toggles pause), menu (`Esc` = pause /
-  back). HUD chips show villagers, food, water, fish, goats, labor, wood and island health.
-- Toasts announce new events; the goals card tracks scenario objectives; first-time coach marks
-  explain the HUD (Settings → Tutorial tips).
+  drag to pan; pinch / mouse wheel / trackpad / `+` `-` / on-screen +− to zoom; arrow keys pan.
+- Bottom toolbar: Inspect · Clear · Plant · Farm · House · Dam · Restore · Remove (keys `1`–`8`),
+  each with its cost under it (hand = labor, tree = wood). With a build tool picked, every tile
+  where it works is tinted (green OK, amber can't afford, blue floodplain) and a hint bar says
+  where it works. Mouse: a ghost of the build + a cost/reason tag follow the cursor. Touch: farms,
+  houses, dams and removals preview on the first tap and build on the second. After a big build
+  the tool drops back to Inspect (hold Shift to keep it). Side buttons: Layers (`L`), History (`H`).
+- Top bar: day/season chip, Pause / Play (1 day per second) / 2× / 4× (`Space` toggles pause),
+  menu (`Esc` = pause / back). Tap any number for a plain-words card - People shows exactly why
+  the village is or isn't growing (fed > 95 %, water > 95 %, 3 food stored per person, free homes,
+  next check in N days).
+- The goals card lists the goals, the extra stars and how you lose. Toasts put bad news first,
+  at most two at a time. Zoomed out, a "Village · N" pin marks the village.
+- Map changes animate (build/plant grow in, cleared trees fall, crops and cottages pop); all
+  motion respects Settings → Reduce motion.
+- The island tells its story on the map ("Every action ripples."): glowing ripple threads run
+  from an event's recorded causes to it (History → Show on map, and automatically for big news);
+  hovering Clear/Farm shows where the tile's soil would wash; washed-off soil leaves brown gullies
+  and a lingering, spreading mud plume in the sea; fish schools swim in clear water and thin out;
+  island health colours the land (sepia when sick, lush when well). The first flood, fire, drought,
+  muddy coast etc. each get a one-line explanation with "Show me".
 
 Settings (saved to `user://settings.cfg`): master / music / effects / sea & rain volume,
 interface size (S/M/L/XL), colour-blind-safe layers, reduce motion, haptics, tutorial tips,
-language (English only for now). Layout adapts to phone portrait, phone landscape and desktop.
+language (English · Bahasa Melayu, switches live). Layout adapts to phone portrait, phone
+landscape and desktop.
+
+Translation: English text is the key, `i18n/ms.json` holds Bahasa Melayu. Static labels translate
+themselves (Godot auto-translate); text built from a template uses `I18n.t("Day %d") % day` /
+`I18n.f(...)`. `tests/test_i18n.gd` fails on any untranslated template, table entry or on-screen
+text (`godot --headless --path . -s tools/i18n_misses.gd -- --lang=ms` lists what to translate).
 
 The game autosaves (every 30 days and whenever the app is backgrounded/closed) and Continue
 resumes where you left off, catching up the time you were away (capped at 360 days) with a
@@ -58,7 +87,9 @@ Debug args (after `--`): `--seed --zoom --clear-rect=x0,y0,x1,y1 --farms=N --far
 --dams=N --ticks=N --until=EVENT_TYPE --away=SECONDS --speed=0|1|2 --overlay=0..4 --history[=TYPE]
 --focus=village|dam|event|x,y --select=village|dam|event|x,y --scenario=ID --tutorial --restore
 --no-results --screen=menu|campaign|challenges|new_world|settings|pause|load|save|achievements|results_won|results_failed
---coach --reduce-motion --colorblind --screenshot=PATH --frames=N`. Don't combine `--seed` with `--scenario`.
+--coach --reduce-motion --colorblind --screenshot=PATH --frames=N --lang=en|ms --guide=STEP
+--tool=farm|house|… --hover=x,y|best --chip=villagers|food|… --act=clear|farm|house|plant --perf=FRAMES`.
+Don't combine `--seed` with `--scenario`.
 Runs with debug args don't read/write the save unless `--restore` is given.
 
 ## Folders & naming

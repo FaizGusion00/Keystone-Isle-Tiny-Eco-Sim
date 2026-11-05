@@ -109,22 +109,22 @@ static func met(o: Dictionary, ws: WorldState, sc: Scenario) -> bool:
 static func label(o: Dictionary) -> String:
 	var t := int(o.get("target", 1))
 	match str(o["kind"]):
-		"villagers": return "Reach %d villagers" % t
-		"farms": return "Have %d farm%s" % [t, "" if t == 1 else "s"]
-		"houses": return "Build %d house%s" % [t, "" if t == 1 else "s"]
-		"dams": return "Build %d dam%s" % [t, "" if t == 1 else "s"]
-		"keystone": return "Island health %d+" % t
-		"fish": return ("Keep fish above %d" if o.get("hold", false) else "Grow fish to %d") % t
-		"goats": return "Keep %d+ wild goats" % t
-		"trees_planted": return "Plant %d trees" % t
-		"restored": return "Restore %d damaged tiles" % t
-		"harvests": return "Bring in %d harvests" % t
-		"food": return "Store %d food" % t
-		"survive": return "Last %d days" % t
-		"clear_water": return "Clear coastal water"
-		"no_loss": return "No villager leaves"
-		"no_fire_loss": return "No wildfires"
-		"by_day": return "Finish by day %d" % t
+		"villagers": return I18n.t("Reach %d villagers") % t
+		"farms": return I18n.t("Have 1 farm") if t == 1 else I18n.f("Have %d farms", t)
+		"houses": return I18n.t("Build 1 house") if t == 1 else I18n.f("Build %d houses", t)
+		"dams": return I18n.t("Build 1 dam") if t == 1 else I18n.f("Build %d dams", t)
+		"keystone": return I18n.t("Island health %d+") % t
+		"fish": return I18n.f("Keep fish above %d" if o.get("hold", false) else "Grow fish to %d", t)
+		"goats": return I18n.t("Keep %d+ wild goats") % t
+		"trees_planted": return I18n.t("Plant %d trees") % t
+		"restored": return I18n.t("Restore %d damaged tiles") % t
+		"harvests": return I18n.t("Bring in %d harvests") % t
+		"food": return I18n.t("Store %d food") % t
+		"survive": return I18n.t("Last %d days") % t
+		"clear_water": return I18n.t("Clear coastal water")
+		"no_loss": return I18n.t("No villager leaves")
+		"no_fire_loss": return I18n.t("No wildfires")
+		"by_day": return I18n.t("Finish by day %d") % t
 	return str(o["kind"])
 
 
@@ -134,9 +134,9 @@ static func progress_text(o: Dictionary, ws: WorldState, sc: Scenario) -> String
 	var v := metric(k, ws, sc)
 	match k:
 		"clear_water", "no_loss", "no_fire_loss":
-			return "yes" if v >= 1.0 else "no"
+			return I18n.t("yes") if v >= 1.0 else I18n.t("no")
 		"by_day":
-			return "day %d" % int(v)
+			return I18n.t("day %d") % int(v)
 	return "%d/%d" % [int(v), int(o.get("target", 1))]
 
 
@@ -168,20 +168,24 @@ func evaluate(ws: WorldState) -> void:
 			stars = mini(stars, 1)
 		if is_scored():
 			_score_medal(ws)
-		_end(ws, Status.WON, str(def.get("win_text", "You did it!")))
+		_end(ws, Status.WON, I18n.t(str(def.get("win_text", "You did it!"))))
 		return
 	if ws.relaxed:
 		return
 	if ws.villagers <= int(def.get("fail_villagers", 0)):
-		_end(ws, Status.FAILED, "Too many villagers left the island.")
+		_end(ws, Status.FAILED, I18n.t("Too many villagers left the island."))
 	elif def.has("census") and days_elapsed(ws) > 0 and days_elapsed(ws) % int(Simulation.YEAR_LENGTH) == 0 \
 			and ws.villagers < census_target(ws):
-		_end(ws, Status.FAILED, "The year-%d census counted %d villagers; the island needed %d." % [
+		_end(ws, Status.FAILED, I18n.t("The year-%d census counted %d villagers; the island needed %d.") % [
 			days_elapsed(ws) / int(Simulation.YEAR_LENGTH), ws.villagers, census_target(ws)])
 	elif def.has("fail_keystone") and days_elapsed(ws) > 30 and ws.keystone < float(def["fail_keystone"]):
-		_end(ws, Status.FAILED, "The island's health collapsed below %d." % int(def["fail_keystone"]))
+		_end(ws, Status.FAILED, I18n.t("The island's health collapsed below %d.") % int(def["fail_keystone"]))
 	elif deadline() > 0 and days_elapsed(ws) >= deadline():
-		_end(ws, Status.FAILED, "Day %d came before every goal was met." % deadline())
+		var missed := PackedStringArray()
+		for k in objs.size():
+			if not objective_done(k, ws):
+				missed.append(I18n.done("%s (%s)" % [label(objs[k]), progress_text(objs[k], ws, self)]))
+		_end(ws, Status.FAILED, I18n.f("Day %d came and these goals were not met: %s.", [deadline(), ", ".join(missed)]))
 
 
 ## Endless: villagers required at the next year-end census.
@@ -202,7 +206,7 @@ func _end(ws: WorldState, s: int, why: String) -> void:
 	if s == Status.FAILED and is_scored():
 		_score_medal(ws)
 		if is_endless():
-			why = "The village held on for %d days. %s" % [days_elapsed(ws), why]
+			why = I18n.t("The village held on for %d days. %s") % [days_elapsed(ws), why]
 	status = s
 	ended_tick = ws.tick
 	reason = why
@@ -211,30 +215,30 @@ func _end(ws: WorldState, s: int, why: String) -> void:
 ## One-line HUD summary.
 func objective_text(ws: WorldState) -> String:
 	if is_sandbox():
-		return "Sandbox - free play"
+		return I18n.t("Sandbox - free play")
 	if is_scored():
 		var d := days_elapsed(ws)
 		match status:
 			Status.RUNNING:
 				if is_endless():
 					var left := int(Simulation.YEAR_LENGTH) - d % int(Simulation.YEAR_LENGTH)
-					return "Day %d  ·  census in %d days: %d/%d villagers  ·  score %d" % [d, left, ws.villagers,
+					return I18n.t("Day %d  ·  census in %d days: %d/%d villagers  ·  score %d") % [d, left, ws.villagers,
 						census_target(ws), score(ws)]
-				return "Day %d/%d  ·  score %d" % [d, int(objectives()[0].get("target", 0)), score(ws)]
+				return I18n.t("Day %d/%d  ·  score %d") % [d, int(objectives()[0].get("target", 0)), score(ws)]
 			_:
-				return "Final score %d  ·  %s" % [final_score, MEDAL_NAMES[clampi(stars, 0, 3)]]
+				return I18n.t("Final score %d  ·  %s") % [final_score, I18n.t(MEDAL_NAMES[clampi(stars, 0, 3)])]
 	match status:
 		Status.WON:
-			return "Complete - %d of 3 stars (day %d)" % [stars, ended_tick - start_tick]
+			return I18n.t("Complete - %d of 3 stars (day %d)") % [stars, ended_tick - start_tick]
 		Status.FAILED:
-			return "Failed (day %d)" % (ended_tick - start_tick)
+			return I18n.t("Failed (day %d)") % (ended_tick - start_tick)
 	var objs := objectives()
 	for k in objs.size():
 		if not objective_done(k, ws):
 			var o: Dictionary = objs[k]
-			var left := ("  ·  %d days left" % (deadline() - days_elapsed(ws))) if deadline() > 0 else ""
-			return "%s  (%s)%s" % [label(o), progress_text(o, ws, self), left]
-	return "All goals met"
+			var left := I18n.f("  ·  %d days left", deadline() - days_elapsed(ws)) if deadline() > 0 else ""
+			return I18n.done("%s  (%s)%s" % [label(o), progress_text(o, ws, self), left])
+	return I18n.t("All goals met")
 
 
 func intro_text() -> String:

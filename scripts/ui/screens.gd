@@ -76,6 +76,7 @@ func open(screen_name: String, data: Dictionary = {}, push := true) -> void:
 		_stack.append(current)
 	_data = data
 	current = screen_name
+	_cancel_fade()
 	visible = true
 	_build(screen_name)
 	opened.emit(screen_name)
@@ -92,15 +93,46 @@ func back() -> void:
 
 
 func close() -> void:
-	if not visible:
+	if not visible or current == "":
 		return
-	visible = false
-	current = ""
+	current = ""  # logically closed at once (is_open() is false); the sheet then fades out
 	_stack.clear()
-	if _content != null:
-		_content.queue_free()
-		_content = null
+	var c := _content
+	_content = null
+	if UiKit.reduce_motion or not is_inside_tree():
+		visible = false
+		if c != null:
+			c.queue_free()
+		closed.emit()
+		return
+	root.mouse_filter = Control.MOUSE_FILTER_IGNORE  # the game is usable while the sheet fades
+	if c != null:
+		_ignore_mouse(c)
+	var t := Motion.tween(root, "fade")
+	t.tween_property(root, "modulate:a", 0.0, Motion.FAST).set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_IN)
+	t.tween_callback(func() -> void:
+		visible = false
+		root.modulate.a = 1.0
+		root.mouse_filter = Control.MOUSE_FILTER_STOP
+		if c != null:
+			c.queue_free())
 	closed.emit()
+
+
+func _cancel_fade() -> void:
+	Motion.stop(root, "fade")
+	root.modulate.a = 1.0
+	root.mouse_filter = Control.MOUSE_FILTER_STOP
+	for ch in root.get_children():
+		if ch.has_meta("leaving"):
+			ch.queue_free()
+
+
+static func _ignore_mouse(n: Node) -> void:
+	if n is Control:
+		(n as Control).mouse_filter = Control.MOUSE_FILTER_IGNORE
+	for ch in n.get_children():
+		_ignore_mouse(ch)
 
 
 func _relayout() -> void:
@@ -118,8 +150,15 @@ func _build(screen_name: String, animate := true) -> void:
 	_shade.visible = screen_name == "menu" and not portrait
 	_backdrop.color = Color(0.09, 0.13, 0.15, 0.08 if screen_name == "menu" else 0.45)
 	if _content != null:
-		root.remove_child(_content)
-		_content.queue_free()
+		var old := _content
+		if animate and not UiKit.reduce_motion and is_inside_tree():
+			# cross-fade: the old sheet fades out under the new one (input goes to the new one)
+			old.set_meta("leaving", true)
+			_ignore_mouse(old)
+			Motion.disappear(old, Vector2.ZERO, Motion.FAST, func() -> void: old.queue_free())
+		else:
+			root.remove_child(old)
+			old.queue_free()
 	match screen_name:
 		"menu": _content = _menu(sz)
 		"campaign": _content = _campaign(sz, "campaign")
@@ -134,6 +173,7 @@ func _build(screen_name: String, animate := true) -> void:
 		"journal": _content = _journal(sz)
 		"codex": _content = _codex(sz)
 		"help": _content = _help(sz)
+		"language": _content = _language(sz)
 		_: _content = Control.new()
 	root.add_child(_content)
 	if _post_fit.is_valid():
@@ -236,6 +276,49 @@ func _stars_row(n: int, size := 22.0) -> HBoxContainer:
 
 # ================================================================== main menu
 
+## First launch: one tap to pick the language (both shown in their own words), then play.
+func _language(sz: Vector2) -> Control:
+	var holder := Control.new()
+	holder.size = sz
+	var card := UiKit.card()
+	var col := UiKit.vbox(14)
+	card.add_child(col)
+	var head := UiKit.hbox(10)
+	head.add_child(UiKit.icon_badge("languages", UiKit.TEAL_SOFT, UiKit.TEAL_DARK, 48))
+	var t := UiKit.vbox(0)
+	var a := UiKit.label("Choose your language", 26, "Title")
+	a.auto_translate_mode = Node.AUTO_TRANSLATE_MODE_DISABLED
+	t.add_child(a)
+	var b := UiKit.label("Pilih bahasa anda", 18, "Caption")
+	b.auto_translate_mode = Node.AUTO_TRANSLATE_MODE_DISABLED
+	t.add_child(b)
+	head.add_child(t)
+	col.add_child(head)
+	var w := minf(420.0, sz.x - 64.0)
+	for l in I18n.LANGUAGES:
+		var code: String = l[0]
+		var btn := UiKit.button(str(l[1]), Vector2(w, 60), "check" if code == I18n.current() else "", "Primary" if code == I18n.current() else "")
+		btn.auto_translate_mode = Node.AUTO_TRANSLATE_MODE_DISABLED
+		btn.pressed.connect(func() -> void:
+			main.change_setting("language", code)
+			close())
+		col.add_child(btn)
+	var note := UiKit.label("You can change this later in Settings · Boleh ditukar dalam Tetapan", 13, "Caption")
+	note.auto_translate_mode = Node.AUTO_TRANSLATE_MODE_DISABLED
+	col.add_child(note)
+	holder.add_child(card)
+	card.reset_size()
+	card.position = (sz - card.get_combined_minimum_size()) * 0.5
+	return holder
+
+
+func _any_slot_saved() -> bool:
+	for k in range(1, SaveSystem.SLOT_COUNT + 1):
+		if FileAccess.file_exists(SaveSystem.slot_path(k)):
+			return true
+	return false
+
+
 func _menu(sz: Vector2) -> Control:
 	var holder := Control.new()
 	holder.size = sz
@@ -253,15 +336,25 @@ func _menu(sz: Vector2) -> Control:
 	brand.add_child(bt)
 	col.add_child(brand)
 	col.add_child(_gap(10))
+	# only what the player can use yet: modes appear as they unlock (no locked doors on day one)
+	var pr0: Progress = main.progress
+	var won1 := pr0.best_stars(ScenarioCatalog.CAMPAIGN[0]["id"]) > 0
 	var items: Array = []
 	if main.has_game():
 		items.append(["Continue", "play", func() -> void: main.resume_game(), true])
-	items.append(["Campaign", "map", func() -> void: open("campaign"), not main.has_game()])
-	items.append(["Daily · Weekly · Endless", "calendar", func() -> void: open("modes"), false])
-	items.append(["Challenges", "flame", func() -> void: open("challenges"), false])
-	items.append(["New world", "globe", func() -> void: open("new_world"), false])
-	items.append(["Load game", "folder-open", func() -> void: open("load"), false])
-	items.append(["Journal", "book-open", func() -> void: open("journal"), false])
+	else:
+		items.append(["Start", "play", func() -> void: main.start_tutorial(), true])
+	items.append(["Campaign", "map", func() -> void: open("campaign"), false])
+	if won1:
+		items.append(["Daily · Weekly · Endless", "calendar", func() -> void: open("modes"), false])
+	if pr0.is_unlocked(ScenarioCatalog.CHALLENGES[0]["id"]):
+		items.append(["Challenges", "flame", func() -> void: open("challenges"), false])
+	if won1:
+		items.append(["New world", "globe", func() -> void: open("new_world"), false])
+	if _any_slot_saved():
+		items.append(["Load game", "folder-open", func() -> void: open("load"), false])
+	if won1 or pr0.achievements.size() > 0:
+		items.append(["Journal", "book-open", func() -> void: open("journal"), false])
 	var k := 0
 	var bh := 54.0 if sz.y >= 700 else 48.0
 	for it in items:
@@ -290,15 +383,15 @@ func _menu(sz: Vector2) -> Control:
 	var foot := UiKit.hbox(14)
 	var s1 := UiKit.hbox(4)
 	s1.add_child(UiKit.icon("star-fill", 18, UiKit.AMBER))
-	s1.add_child(UiKit.label("%d stars" % pr.total_stars(), 0, "Caption"))
+	s1.add_child(UiKit.label(I18n.f("%d stars", pr.total_stars()), 0, "Caption"))
 	foot.add_child(s1)
 	var s2 := UiKit.hbox(4)
 	s2.add_child(UiKit.icon("award", 18, UiKit.TEAL))
-	s2.add_child(UiKit.label("%d/%d achievements" % [pr.achievements.size(), Achievements.LIST.size()], 0, "Caption"))
+	s2.add_child(UiKit.label(I18n.f("%d/%d achievements", [pr.achievements.size(), Achievements.LIST.size()]), 0, "Caption"))
 	foot.add_child(s2)
 	var s3 := UiKit.hbox(4)
 	s3.add_child(UiKit.icon("sparkles", 18, pr.banner_color()))
-	s3.add_child(UiKit.label("Level %d%s" % [pr.level(), "  ·  P%d" % pr.prestige if pr.prestige > 0 else ""], 0, "Caption"))
+	s3.add_child(UiKit.label(I18n.done(I18n.f("Level %d", pr.level()) + (I18n.t("  ·  P%d") % pr.prestige if pr.prestige > 0 else "")), 0, "Caption"))
 	foot.add_child(s3)
 	col.add_child(foot)
 	var card: PanelContainer = null
@@ -307,9 +400,25 @@ func _menu(sz: Vector2) -> Control:
 		holder.remove_child(col)
 		card.add_child(col)
 		holder.add_child(card)
-	var ver := UiKit.label("v1.0 · made with Godot", 0, "Caption")
-	ver.modulate.a = 0.7
-	holder.add_child(ver)
+	# Quiet studio lockup beside the version line. Light type, because it sits on the sea.
+	var credit := UiKit.vbox(1)
+	var align := HORIZONTAL_ALIGNMENT_LEFT if portrait else HORIZONTAL_ALIGNMENT_RIGHT
+	var credit_lines: Array = [
+		["Developed by Faiz Nasir", Color(0.98, 0.96, 0.91, 0.94)],
+		["FG Universal Empire", Color(0.98, 0.96, 0.91, 0.72)],
+	]
+	for row in credit_lines:
+		var line := UiKit.label(row[0], 0, "Caption")
+		line.horizontal_alignment = align
+		line.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		line.add_theme_color_override("font_color", row[1])
+		credit.add_child(line)
+	var ver := UiKit.label(I18n.f("v%s · made with Godot", str(ProjectSettings.get_setting("application/config/version", "1.0"))), 0, "Caption")
+	ver.horizontal_alignment = align
+	ver.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	ver.add_theme_color_override("font_color", Color(0.98, 0.96, 0.91, 0.55))
+	credit.add_child(ver)
+	holder.add_child(credit)
 	_post_fit = func() -> void:
 		if card != null:
 			card.reset_size()
@@ -317,11 +426,11 @@ func _menu(sz: Vector2) -> Control:
 		else:
 			col.reset_size()
 			col.position = Vector2(64, (sz.y - col.size.y) * 0.5)
-		ver.reset_size()
-		ver.position = Vector2(sz.x - ver.size.x - 20, sz.y - ver.size.y - 14) if not portrait else Vector2(16, 14)
-		# the island floats in the open space beside / above the menu
-		var free := Rect2(Vector2(16, 44), Vector2(sz.x - 32, card.position.y - 60)) if card != null \
-			else Rect2(Vector2(col.position.x + col.size.x + 24, 24), Vector2(sz.x - col.position.x - col.size.x - 48, sz.y - 48))
+		credit.reset_size()
+		credit.position = Vector2(16, 12) if portrait else Vector2(sz.x - credit.size.x - 22, sz.y - credit.size.y - 16)
+		# the island floats in the open space beside / above the menu, clear of the credit
+		var free := Rect2(Vector2(16, credit.position.y + credit.size.y + 8), Vector2(sz.x - 32, card.position.y - credit.size.y - 36)) if card != null \
+			else Rect2(Vector2(col.position.x + col.size.x + 24, 24), Vector2(sz.x - col.position.x - col.size.x - 48, credit.position.y - 40))
 		menu_free_rect = Rect2(free.position * ui_scale, free.size * ui_scale)
 		if main.has_method("frame_menu_view"):
 			main.frame_menu_view(menu_free_rect)
@@ -379,7 +488,7 @@ func _scenario_card(d: Dictionary, pr: Progress) -> Control:
 	head.add_child(badge)
 	var tc := UiKit.vbox(0)
 	tc.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	tc.add_child(UiKit.label(("Island %d" if d["kind"] == "campaign" else "Challenge %d") % int(d["index"]), 0, "Caption"))
+	tc.add_child(UiKit.label(I18n.f("Island %d" if d["kind"] == "campaign" else "Challenge %d", int(d["index"])), 0, "Caption"))
 	var t := UiKit.label(str(d["title"]), 20, "Heading")
 	t.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	tc.add_child(t)
@@ -432,7 +541,7 @@ func _new_world(sz: Vector2) -> Control:
 	var s2 := _section(body, "Size", "maximize")
 	var labels := []
 	for k in ScenarioCatalog.SIZES.size():
-		labels.append("%s · %d" % [SIZE_LABELS[k], ScenarioCatalog.SIZES[k]] if not portrait else SIZE_LABELS[k])
+		labels.append(I18n.done("%s · %d" % [I18n.t(SIZE_LABELS[k]), ScenarioCatalog.SIZES[k]]) if not portrait else SIZE_LABELS[k])
 	s2.add_child(UiKit.segmented(labels, int(_nw["size"]), func(k: int) -> void: _nw["size"] = k))
 	var s3 := _section(body, "Biome", "palette")
 	var blurb := UiKit.wrap_label(IslandGenerator.PRESET_BLURBS[int(_nw["preset"])], "Caption")
@@ -503,8 +612,14 @@ func _settings(sz: Vector2) -> Control:
 		"Small vibrations on phones and tablets.")
 	_row(c, "compass", "Tutorial tips", UiKit.toggle(bool(st.get_value("show_tutorial")), func(v: bool) -> void: main.change_setting("show_tutorial", v)),
 		"Show coach marks on the first island.")
-	var lang := UiKit.segmented(["English"], 0, func(_k: int) -> void: pass)
-	_row(c, "languages", "Language", lang, "More languages coming; all text is ready for translation.")
+	var names := []
+	for l in I18n.LANGUAGES:
+		names.append(l[1])
+	var lang := UiKit.segmented(names, maxi(0, I18n.codes().find(str(st.get_value("language")))),
+		func(k: int) -> void: main.change_setting("language", I18n.LANGUAGES[k][0]))
+	for b in lang.find_children("*", "Button", true, false):
+		(b as Button).auto_translate_mode = Node.AUTO_TRANSLATE_MODE_DISABLED  # names stay in their own language
+	_row(c, "languages", "Language", lang, "Switch any time; the game changes straight away.")
 	return _fit_sheet(parts, sz)
 
 
@@ -561,7 +676,7 @@ func _pause(sz: Vector2) -> Control:
 	var t := UiKit.vbox(0)
 	t.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	t.add_child(UiKit.label(sim.scenario.title() if sim.scenario != null else "Sandbox", 18, "Subheading"))
-	t.add_child(UiKit.label("Day %d · seed %d · %d villagers" % [sim.world.tick, sim.world.world_seed, sim.world.villagers], 0, "Caption"))
+	t.add_child(UiKit.label(I18n.f("Day %d · seed %d · %d villagers", [sim.world.tick, sim.world.world_seed, sim.world.villagers]), 0, "Caption"))
 	ic.add_child(t)
 	body.add_child(info)
 	var items := [
@@ -570,7 +685,7 @@ func _pause(sz: Vector2) -> Control:
 		["Load game", "folder-open", func() -> void: open("load"), ""],
 		["Restart island", "rotate-ccw", func() -> void: main.restart_scenario(), ""],
 		["Settings", "settings", func() -> void: open("settings"), ""],
-		["How to play", "circle-help", func() -> void: main.show_coach(), ""],
+		["How to play", "circle-help", func() -> void: open("help"), ""],
 		["Main menu", "log-out", func() -> void: main.open_menu(), "Ghost"],
 	]
 	for it in items:
@@ -589,9 +704,9 @@ func _slots(sz: Vector2, saving: bool) -> Control:
 	var body: VBoxContainer = parts[2]
 	var paths: Array = []
 	if not saving:
-		paths.append([main.save_path, "Autosave", -1])
+		paths.append([main.save_path, I18n.t("Autosave"), -1])
 	for k in SaveSystem.SLOT_COUNT:
-		paths.append([SaveSystem.slot_path(k), "Slot %d" % (k + 1), k])
+		paths.append([SaveSystem.slot_path(k), I18n.t("Slot %d") % (k + 1), k])
 	for p in paths:
 		var info := SaveSystem.slot_info(str(p[0]))
 		var card := UiKit.card("Inset")
@@ -602,11 +717,11 @@ func _slots(sz: Vector2, saving: bool) -> Control:
 			UiKit.TEAL_SOFT if not empty else Color(UiKit.INK, 0.06), UiKit.TEAL_DARK if not empty else UiKit.INK_FAINT, 42))
 		var c := UiKit.vbox(0)
 		c.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-		c.add_child(UiKit.label(str(p[1]) + ("" if empty else " · " + str(info.get("title", "Island"))), 17, "Subheading"))
+		c.add_child(UiKit.label(I18n.done(str(p[1]) + ("" if empty else " · " + I18n.t(str(info.get("title", "Island"))))), 17, "Subheading"))
 		if empty:
 			c.add_child(UiKit.label("Empty", 0, "Caption"))
 		else:
-			c.add_child(UiKit.label("Day %d · %d villagers · health %d" % [int(info.get("day", 0)), int(info.get("villagers", 0)), int(info.get("keystone", 0))], 0, "Caption"))
+			c.add_child(UiKit.label(I18n.t("Day %d · %d villagers · health %d") % [int(info.get("day", 0)), int(info.get("villagers", 0)), int(info.get("keystone", 0))], 0, "Caption"))
 			c.add_child(UiKit.label(_when(float(info.get("saved_at", 0.0))), 0, "Caption"))
 		r.add_child(c)
 		var slot := int(p[2])
@@ -635,7 +750,7 @@ func _when(unix: float) -> String:
 	if unix <= 0.0:
 		return ""
 	var d := Time.get_datetime_dict_from_unix_time(int(unix + Time.get_time_zone_from_system().get("bias", 0) * 60))
-	return "Saved %04d-%02d-%02d %02d:%02d" % [d["year"], d["month"], d["day"], d["hour"], d["minute"]]
+	return I18n.t("Saved %04d-%02d-%02d %02d:%02d") % [d["year"], d["month"], d["day"], d["hour"], d["minute"]]
 
 
 # ================================================================== results
@@ -688,6 +803,14 @@ func _results(sz: Vector2) -> Control:
 		if sim.world.relaxed:
 			hv.add_child(UiKit.wrap_label("Relaxed mode: one star at most.", "Caption"))
 		body.add_child(how)
+	var blocker := str(_data.get("blocker", ""))
+	if not won and blocker != "":
+		var bb := UiKit.card("InsetWarm")
+		var bh := UiKit.hbox(10)
+		bb.add_child(bh)
+		bh.add_child(UiKit.icon("target", 22, UiKit.AMBER.darkened(0.3)))
+		bh.add_child(UiKit.wrap_label(blocker, "", minf(560.0, sz.x - 120.0)))
+		body.add_child(bb)
 	var chain: PackedStringArray = _data.get("chain", PackedStringArray())
 	if not won and chain.size() > 0:
 		var box := UiKit.card("InsetWarm")
@@ -714,7 +837,7 @@ func _results(sz: Vector2) -> Control:
 		ar.add_child(h)
 		h.add_child(UiKit.icon_badge(str(info.get("icon", "award")), UiKit.TEAL, Color.WHITE, 40))
 		var tv := UiKit.vbox(0)
-		tv.add_child(UiKit.label("Achievement: " + str(info.get("title", "")), 17, "Subheading"))
+		tv.add_child(UiKit.label(I18n.f("Achievement: %s", I18n.t(str(info.get("title", "")))), 17, "Subheading"))
 		tv.add_child(UiKit.label(str(info.get("text", "")), 0, "Caption"))
 		h.add_child(tv)
 		body.add_child(ar)
@@ -754,7 +877,7 @@ func _achievements(sz: Vector2) -> Control:
 	var body: VBoxContainer = parts[2]
 	_add_journal_tabs(parts, 2, sz)
 	var pr: Progress = main.progress
-	body.add_child(UiKit.label("%d of %d earned" % [pr.achievements.size(), Achievements.LIST.size()], 0, "Caption"))
+	body.add_child(UiKit.label(I18n.f("%d of %d earned", [pr.achievements.size(), Achievements.LIST.size()]), 0, "Caption"))
 	var grid := GridContainer.new()
 	grid.columns = 1 if portrait else (3 if sz.x >= 980 else 2)
 	grid.add_theme_constant_override("h_separation", 10)
@@ -838,7 +961,7 @@ func _mode_card(d: Dictionary, pr: Progress) -> Control:
 	tc.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	tc.add_child(UiKit.label(str(md.get("title", mode.capitalize())), 20, "Heading"))
 	var sub := str(d["title"]).get_slice("·", 1).strip_edges()
-	tc.add_child(UiKit.label("%s · %s island" % [sub, IslandGenerator.PRESET_NAMES[int(d["preset"]) % 4]], 0, "Caption"))
+	tc.add_child(UiKit.label(I18n.f("%s · %s island", [sub, I18n.t(IslandGenerator.PRESET_NAMES[int(d["preset"]) % 4])]), 0, "Caption"))
 	head.add_child(tc)
 	col.add_child(head)
 	var blurb := UiKit.wrap_label(str(md.get("blurb", "")), "")
@@ -851,14 +974,14 @@ func _mode_card(d: Dictionary, pr: Progress) -> Control:
 			var m := ContentDB.mutator(str(mid))
 			var r := UiKit.hbox(8)
 			r.add_child(UiKit.icon(str(m.get("icon", "sparkles")), 18, UiKit.AMBER_DARK))
-			var ml := UiKit.wrap_label("%s - %s" % [m.get("title", mid), m.get("blurb", "")], "Caption")
+			var ml := UiKit.wrap_label(I18n.done("%s - %s" % [I18n.t(str(m.get("title", mid))), I18n.t(str(m.get("blurb", "")))]), "Caption")
 			ml.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 			r.add_child(ml)
 			col.add_child(r)
-		col.add_child(UiKit.label("Score bonus ×%.2f" % float(d.get("score_mult", 1.0)), 0, "Caption"))
+		col.add_child(UiKit.label(I18n.f("Score bonus ×%.2f", float(d.get("score_mult", 1.0))), 0, "Caption"))
 	elif d.has("census"):
 		var cz: Array = d["census"]
-		col.add_child(UiKit.wrap_label("Yearly census (every 120 days): at least %d villagers, +%d each year (up to %d)." % [int(cz[0]), int(cz[1]), int(cz[2])], "Caption"))
+		col.add_child(UiKit.wrap_label(I18n.t("Yearly census (every 120 days): at least %d villagers, +%d each year (up to %d).") % [int(cz[0]), int(cz[1]), int(cz[2])], "Caption"))
 	var medals: Array = d.get("medals", [])
 	var mr := UiKit.hbox(6)
 	for k in medals.size():
@@ -871,7 +994,7 @@ func _mode_card(d: Dictionary, pr: Progress) -> Control:
 		foot.add_child(UiKit.label("Not played yet", 0, "Caption"))
 	else:
 		foot.add_child(_medal_icon(int(b.get("medal", 0)), 22))
-		foot.add_child(UiKit.label("Best %d" % int(b.get("score", 0)), 16, "Subheading"))
+		foot.add_child(UiKit.label(I18n.f("Best %d", int(b.get("score", 0))), 16, "Subheading"))
 	foot.add_child(UiKit.spacer())
 	if mode == "endless" and unlocked:
 		var dice := UiKit.icon_button("dice-5", "Another island")
@@ -923,14 +1046,14 @@ func _journal(sz: Vector2) -> Control:
 	lh.add_child(lvl)
 	var lv := UiKit.vbox(4)
 	lv.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	var lt := "Steward level %d" % pr.level()
+	var lt := I18n.t("Steward level %d") % pr.level()
 	if pr.prestige > 0:
-		lt += "  ·  Prestige %d" % pr.prestige
+		lt += I18n.t("  ·  Prestige %d") % pr.prestige
 	lv.add_child(UiKit.label(lt, 22, "Heading"))
 	lv.add_child(UiKit.meter(pr.level_progress(), UiKit.TEAL, 10))
 	var nxt := Progress.xp_for_level(pr.level() + 1)
-	lv.add_child(UiKit.label("%d / %d XP to level %d%s" % [pr.xp, nxt, pr.level() + 1,
-		"  ·  +%d%% XP from prestige" % (10 * pr.prestige) if pr.prestige > 0 else ""], 0, "Caption"))
+	lv.add_child(UiKit.label(I18n.done(I18n.f("%d / %d XP to level %d", [pr.xp, nxt, pr.level() + 1]) +
+		(I18n.t("  ·  +%d%% XP from prestige") % (10 * pr.prestige) if pr.prestige > 0 else "")), 0, "Caption"))
 	lh.add_child(lv)
 	body.add_child(lc)
 	# stats
@@ -939,11 +1062,11 @@ func _journal(sz: Vector2) -> Control:
 	flow.add_theme_constant_override("h_separation", 18)
 	flow.add_theme_constant_override("v_separation", 8)
 	st.add_child(flow)
-	for it in [["star-fill", UiKit.AMBER, "%d stars" % pr.total_stars()], ["trophy", UiKit.TEAL, "%d islands won" % pr.games_won],
-			["medal", MEDAL_COLORS[3], "%d medals" % pr.medal_count()],
-			["bird", UiKit.SKY, "%d/%d species" % [pr.species_count(), ContentDB.species().size()]],
-			["zap", UiKit.CORAL, "%d/%d rare events" % [pr.codex_events.size(), ContentDB.rare_events().size()]],
-			["award", UiKit.TEAL, "%d/%d achievements" % [pr.achievements.size(), Achievements.LIST.size()]]]:
+	for it in [["star-fill", UiKit.AMBER, I18n.t("%d stars") % pr.total_stars()], ["trophy", UiKit.TEAL, I18n.t("%d islands won") % pr.games_won],
+			["medal", MEDAL_COLORS[3], I18n.t("%d medals") % pr.medal_count()],
+			["bird", UiKit.SKY, I18n.t("%d/%d species") % [pr.species_count(), ContentDB.species().size()]],
+			["zap", UiKit.CORAL, I18n.t("%d/%d rare events") % [pr.codex_events.size(), ContentDB.rare_events().size()]],
+			["award", UiKit.TEAL, I18n.t("%d/%d achievements") % [pr.achievements.size(), Achievements.LIST.size()]]]:
 		var h := UiKit.hbox(6)
 		h.add_child(UiKit.icon(it[0], 20, it[1]))
 		h.add_child(UiKit.label(it[2], 16))
@@ -967,8 +1090,8 @@ func _journal(sz: Vector2) -> Control:
 		ps_text.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		ph.add_child(ps_text)
 		ps = ph
-	ps_text.add_child(UiKit.wrap_label("At level %d you may start a new prestige: your level returns to 1, every later run earns 10%% more XP, "
-		% int(ContentDB.mode("xp").get("prestige_level", 10)) + "and the Deep sea banner unlocks. Stars, medals, bests, codex and banners are kept.", "Caption"))
+	ps_text.add_child(UiKit.wrap_label(I18n.f("At level %d you may start a new prestige: your level returns to 1, every later run earns 10%% more XP, and the Deep sea banner unlocks. Stars, medals, bests, codex and banners are kept.",
+		int(ContentDB.mode("xp").get("prestige_level", 10))), "Caption"))
 	var pb := UiKit.button("Tap again to confirm" if _prestige_armed else "Prestige now", Vector2(0, 54), "rotate-ccw",
 		"Primary" if _prestige_armed else "")
 	pb.size_flags_horizontal = Control.SIZE_SHRINK_END
@@ -999,7 +1122,7 @@ func _banner_chip(b: Dictionary, pr: Progress) -> Control:
 	btn.add_theme_color_override("icon_hover_color", Color.html(str(b["color"])) if have and not sel else (Color.WHITE if sel else UiKit.INK_FAINT))
 	btn.expand_icon = false
 	btn.disabled = not have
-	btn.tooltip_text = "%s banner" % b["title"]
+	btn.tooltip_text = I18n.t("%s banner") % b["title"]
 	var id := str(b["id"])
 	btn.pressed.connect(func() -> void:
 		main.set_banner(id)
@@ -1010,13 +1133,13 @@ func _banner_chip(b: Dictionary, pr: Progress) -> Control:
 
 func _unlock_text(u: Dictionary) -> String:
 	if u.has("level"):
-		return "Level %d" % int(u["level"])
+		return I18n.t("Level %d") % int(u["level"])
 	if u.has("medals"):
-		return "%d medals" % int(u["medals"])
+		return I18n.t("%d medals") % int(u["medals"])
 	if u.has("prestige"):
-		return "Prestige %d" % int(u["prestige"])
+		return I18n.t("Prestige %d") % int(u["prestige"])
 	if u.has("species"):
-		return "%d species" % int(u["species"])
+		return I18n.t("%d species") % int(u["species"])
 	return "Locked"
 
 
@@ -1037,7 +1160,7 @@ func _codex(sz: Vector2) -> Control:
 	for s in ContentDB.species():
 		var seen := (pr.codex_species & int(s["bit"])) != 0
 		g1.add_child(_codex_card(str(s["icon"]), str(s["title"]) if seen else "Undiscovered species", seen,
-			["Needs: " + str(s["needs"]), str(s["effect"]) if seen else "Its effect is revealed once it settles on one of your islands."]))
+			[I18n.f("Needs: %s", I18n.t(str(s["needs"]))), str(s["effect"]) if seen else "Its effect is revealed once it settles on one of your islands."]))
 	var ev := _section(body, "Rare events", "zap")
 	var g2 := GridContainer.new()
 	g2.columns = cols
@@ -1047,7 +1170,7 @@ func _codex(sz: Vector2) -> Control:
 	for r in ContentDB.rare_events():
 		var seen := pr.codex_events.has(str(r["type"]))
 		g2.add_child(_codex_card(str(r["icon"]), str(r["title"]) if seen else "Unknown event", seen,
-			[str(r["text"]), "Counter: " + str(r["counter"])] if seen else ["Not witnessed yet. Survive long enough on a seeded island to see it."]))
+			[str(r["text"]), I18n.f("Counter: %s", I18n.t(str(r["counter"])))] if seen else ["Not witnessed yet. Survive long enough on a seeded island to see it."]))
 	return _fit_sheet(parts, sz)
 
 
@@ -1100,8 +1223,15 @@ func _help(sz: Vector2) -> Control:
 	var btns := HFlowContainer.new()
 	btns.alignment = FlowContainer.ALIGNMENT_END
 	btns.add_theme_constant_override("h_separation", 8)
+	# replaying the tutorial replaces the island in play: the first tap only asks
 	var coach := UiKit.button("Replay the tutorial", Vector2(0, 54), "compass")
-	coach.pressed.connect(func() -> void: main.start_tutorial())
+	coach.pressed.connect(func() -> void:
+		if not main.has_game() or coach.has_meta("armed"):
+			main.start_tutorial()
+		else:
+			coach.set_meta("armed", true)
+			coach.text = "Tap again: your current island will be replaced"
+			Motion.pulse(coach, 1.06, 0.3))
 	btns.add_child(coach)
 	body.add_child(btns)
 	return _fit_sheet(parts, sz)
@@ -1122,15 +1252,15 @@ func _score_block(sc: Scenario, run: Dictionary) -> Control:
 		tw.tween_interval(0.3)
 		tw.tween_callback(func() -> void: AudioDirector.sfx("star", 0.9 + 0.12 * m))
 		tw.tween_property(ic, "scale", Vector2.ONE, 0.4).set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT)
-	var ml := UiKit.label(Scenario.MEDAL_NAMES[m].capitalize() + (" medal" if m > 0 else ""), 18, "Subheading")
+	var ml := UiKit.label(I18n.t(["No Medal", "Bronze medal", "Silver medal", "Gold medal"][m]), 18, "Subheading")
 	ml.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	box.add_child(ml)
-	var pts := UiKit.label("%d points" % sc.final_score, 40, "Title")
+	var pts := UiKit.label(I18n.f("%d points", sc.final_score), 40, "Title")
 	pts.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	box.add_child(pts)
 	var medals: Array = sc.def.get("medals", [])
 	if m < medals.size():
-		var nx := UiKit.label("%d more for %s" % [int(medals[m]) - sc.final_score, Scenario.MEDAL_NAMES[m + 1]], 0, "Caption")
+		var nx := UiKit.label(I18n.f("%d more for %s", [int(medals[m]) - sc.final_score, I18n.t(Scenario.MEDAL_NAMES[m + 1])]), 0, "Caption")
 		nx.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 		box.add_child(nx)
 	if bool(run.get("new_best", false)):
@@ -1152,9 +1282,9 @@ func _xp_line(run: Dictionary) -> Control:
 	h.add_child(UiKit.icon_badge("sparkles", pr.banner_color(), Color.WHITE, 40))
 	var v := UiKit.vbox(2)
 	v.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	var t := "+%d XP" % int(run.get("xp", 0))
+	var t := I18n.t("+%d XP") % int(run.get("xp", 0))
 	if bool(run.get("level_up", false)):
-		t += "  ·  Level up! You are now level %d" % pr.level()
+		t = I18n.done(t + I18n.t("  ·  Level up! You are now level %d") % pr.level())
 	v.add_child(UiKit.label(t, 17, "Subheading"))
 	if bool(run.get("off_clock", false)):
 		var oc := UiKit.label("Your device clock is earlier than a day you already played, so this score stays on this device.", 0, "Caption")

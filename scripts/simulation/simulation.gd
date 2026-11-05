@@ -96,6 +96,8 @@ const LIFE_CAUSE_WINDOW := 60
 const LABOR_PER_VILLAGER := 0.1   ## labor regenerated per villager per day
 const LABOR_CAP_BASE := 10.0
 const WOOD_PER_FOREST := 4.0      ## wood gained by clearing a forest tile
+const WOOD_MATURE_FROM := 0.60     ## a freshly planted stand (cover ≤ 0.6, grass-level) yields no wood…
+const WOOD_MATURE_AT := 0.80       ## …a grown forest (cover 0.8+, every generated forest) yields the full WOOD_PER_FOREST
 const WOOD_MAX := 99.0
 const HOUSE_RADIUS := 2           ## houses: within this of the village centre, or next to a house
 const DAM_MIN_AREA := 12          ## tiles that must drain through a dam site (a stream)
@@ -1125,6 +1127,37 @@ func _keystone() -> void:
 			+ 0.15 * world.k_fish + 0.1 * world.k_wildlife + 0.2 * world.k_village)
 
 
+# ---------------------------------------------------------------- read-only rule queries (UI)
+
+## Why the village is (not) growing, mirroring _population exactly. Read-only.
+## {fed, water, fed_ok, water_ok, store, store_need, store_ok, homes, room_ok, leaving, next_in, ready}
+func growth_status() -> Dictionary:
+	var v := world.villagers
+	var cap := world.housing_capacity()
+	var store_need := float(v) * 3.0
+	var d := {
+		"fed": world.food_ema, "water": world.water_ema,
+		"fed_ok": world.food_ema > 0.95, "water_ok": world.water_ema > 0.95,
+		"store": world.food_store, "store_need": store_need, "store_ok": world.food_store >= store_need,
+		"villagers": v, "homes": cap, "room_ok": v < cap,
+		"leaving": (world.food_ema < 0.6 or world.water_ema < 0.6) and not world.relaxed,
+		"next_in": POP_PERIOD - world.tick % POP_PERIOD,
+	}
+	d["ready"] = d["fed_ok"] and d["water_ok"] and d["store_ok"] and d["room_ok"]
+	return d
+
+
+## Daily food flows at the current state (estimates for the UI). Read-only.
+func food_status() -> Dictionary:
+	var v := float(world.villagers)
+	var eat := v * FOOD_PER_VILLAGER
+	var catch := minf(world.fish * FISH_CATCH_RATE, v * FISH_CATCH_PER_VILLAGER)
+	var hunt := minf(world.goats * HUNT_RATE, v * HUNT_PER_VILLAGER)
+	var farms := world.count_structures(WorldState.Structure.FARM)
+	return {"eat": eat, "fish": catch, "goats": hunt, "farms": farms,
+		"farm_daily": farms * HARVEST_FOOD / CROP_DAYS, "days": world.food_store / maxf(eat, 0.001)}
+
+
 ## Chebyshev distance from tile i to the settlement (large if none).
 func distance_to_settlement(x: int, y: int) -> int:
 	if world.settlement_index < 0:
@@ -1259,6 +1292,15 @@ func can_apply(action: int, x: int, y: int) -> String:
 	return ""
 
 
+## Wood from clearing a forest tile with this cover: young (just planted) forest gives nothing,
+## so planting then clearing the same tile is not a free wood source.
+static func wood_yield(cover: float) -> float:
+	var mature := clampf((cover - WOOD_MATURE_FROM) / (WOOD_MATURE_AT - WOOD_MATURE_FROM), 0.0, 1.0)
+	# Cover 0.7 is halfway and should be 2 logs, but (0.7−0.6)/0.2 is 1.999… in binary.
+	# Flooring that drops a whole log. The bias is far smaller than one log.
+	return floorf(WOOD_PER_FOREST * mature + 1e-4)
+
+
 ## Applies a player action between ticks. Returns true on success.
 func apply_action(action: int, x: int, y: int) -> bool:
 	if can_apply(action, x, y) != "":
@@ -1271,12 +1313,14 @@ func apply_action(action: int, x: int, y: int) -> bool:
 	match action:
 		Action.CLEAR_TREES:
 			var was_forest := world.land_type[i] == LandType.FOREST
+			var got := 0.0
 			if was_forest:
 				world.land_type[i] = LandType.LOWLAND if world.elevation[i] < IslandGenerator.LOWLAND_MAX else LandType.GRASSLAND
-				world.wood = minf(world.wood + WOOD_PER_FOREST, WOOD_MAX)
+				got = wood_yield(world.vegetation_cover[i])
+				world.wood = minf(world.wood + got, WOOD_MAX)
 			world.vegetation_cover[i] = 0.06
 			ev = events.record(world.tick, EventLog.Type.TREES_CLEARED if was_forest else EventLog.Type.LAND_CLEARED,
-					x, y, WOOD_PER_FOREST if was_forest else 0.0)
+					x, y, got)
 		Action.PLANT_TREES:
 			world.land_type[i] = LandType.FOREST
 			world.vegetation_cover[i] = maxf(world.vegetation_cover[i], 0.25)

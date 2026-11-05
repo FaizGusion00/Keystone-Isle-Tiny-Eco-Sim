@@ -3,7 +3,7 @@ extends TestCase
 
 const DIR := "user://test_ui"
 const SCREENS := ["menu", "campaign", "challenges", "new_world", "settings", "pause", "load", "save", "achievements",
-	"modes", "journal", "codex", "help"]
+	"modes", "journal", "codex", "help", "language"]
 
 
 func _main() -> Node:
@@ -17,6 +17,7 @@ func _main() -> Node:
 		main.hud.dismiss_popup()
 	if main.hud.coach_active():
 		main.hud.end_coach()
+	open_main(main)
 	return main
 
 
@@ -66,12 +67,13 @@ func test_toolbar_shows_costs_and_inspector_and_why_chain() -> void:
 	main.sim.run(150)
 	main.hud.set_status(main.sim.world)
 	for t in range(1, Hud.Tool.size()):
-		var txt: String = main.hud._tool_cost[t].text
+		var txt: String = main.hud.tool_cost_text(t)
 		assert_true(txt == "free" or txt.contains("labor") or txt.contains("wood"), "tool %d cost '%s'" % [t, txt])
 	var v: Vector2i = main.sim.world.coords(main.sim.world.settlement_index)
 	main.select_tile(v)
 	assert_true(main.hud.inspector_visible(), "inspector slides in")
 	assert_true(main.hud.tile_text(main.sim, v).contains("Village"), main.hud.tile_text(main.sim, v))
+	assert_true(main.hud._insp_sub.text.ends_with("tile %d, %d" % [v.x, v.y]), main.hud._insp_sub.text)
 	main.select_tile(Vector2i(-1, -1))
 	# why-chain: find any event with a recorded cause and explain it in the drawer
 	var pick := -1
@@ -84,7 +86,7 @@ func test_toolbar_shows_costs_and_inspector_and_why_chain() -> void:
 	assert_true(main.hud.events_panel.visible)
 	assert_true(main.hud.explanation_text().contains("because") or main.hud.explanation_text().contains("caused by"), main.hud.explanation_text())
 	main.hud.hide_events()
-	assert_false(main.hud.events_panel.visible)
+	assert_false(main.hud.events_open(), "closed at once (the drawer then fades out)")
 	_free(main)
 
 
@@ -98,6 +100,35 @@ func test_coach_marks_walk_through_and_end() -> void:
 		guard += 1
 	assert_false(main.hud.coach_active(), "coach ends after the last tip")
 	assert_true(guard >= 4 and guard <= 6, "five short tips (%d)" % guard)
+	_free(main)
+
+
+func test_goals_stay_open_under_the_intro_popup() -> void:
+	var main := _main()
+	main.start_scenario("expanding_village")
+	assert_true(main.hud.popup_text() != "", "intro is up")
+	var token: int = main.hud._obj_arm_token
+	main.sim.world.tick += Hud.OBJ_AUTO_DAYS + 2  # the day-based fold must also wait for the popup
+	main.hud.update_objectives(main.sim)
+	assert_false(main.hud.goals_collapsed(), "goals stay open while the intro is read")
+	main.hud.dismiss_popup()
+	assert_true(main.hud._obj_arm_token > token, "fold timer re-armed once the intro is dismissed")
+	assert_false(main.hud.goals_collapsed())
+	_free(main)
+
+
+func test_pause_menu_reaches_the_help_sheet() -> void:
+	var main := _main()
+	main.pause_game()
+	assert_eq(main.screens.current, "pause")
+	var found := false
+	for b in main.screens.find_children("*", "Button", true, false):
+		if (b as Button).text == "How to play":
+			(b as Button).pressed.emit()
+			found = true
+			break
+	assert_true(found, "pause lists How to play")
+	assert_eq(main.screens.current, "help", "How to play opens the help sheet in-game")
 	_free(main)
 
 
@@ -115,38 +146,12 @@ func test_replayed_tips_without_goals_skip_goal_step_and_hold_time() -> void:
 	_free(main)
 
 
-func test_coach_tips_are_short_point_at_target_and_hold_time() -> void:
-	var main := _main()
-	main.start_tutorial()
-	main._process(0.016)
-	assert_true(main.clock.teaching and not main.clock.can_tick(), "the intro popup holds the clock")
-	while main.hud.popup_text() != "":
-		main.hud.dismiss_popup()
-	assert_true(main.hud.coach_active(), "tips follow the intro")
-	main._process(0.016)
-	assert_false(main.clock.can_tick(), "tips hold the clock")
-	for i in main.hud._coach_steps.size():
-		main.hud._coach_go(i)
-		var line: String = main.hud._coach_steps[i][2]
-		assert_true(line.length() <= 90, "tip %d is one short line (%d chars)" % [i, line.length()])
-		var ring: Rect2 = Rect2(main.hud._coach_ring.position, main.hud._coach_ring.size)
-		var arrow: Rect2 = Rect2(main.hud._coach_arrow.position, main.hud._coach_arrow.size)
-		var card: Rect2 = Rect2(main.hud._coach_card.position, main.hud._coach_card.size)
-		assert_true(arrow.grow(10).intersects(ring), "tip %d arrow touches the highlight" % i)
-		assert_true(arrow.grow(10).intersects(card), "tip %d arrow touches the card" % i)
-		assert_false(card.intersects(ring.grow(-4)), "tip %d card does not cover its target" % i)
-	main.hud.end_coach()
-	main._process(0.016)
-	assert_false(main.clock.teaching, "time runs once the tips are done")
-	assert_true(main.clock.can_tick())
-	_free(main)
-
-
 func test_toasts_are_capped() -> void:
 	var main := _main()
 	for i in 6:
 		main.hud.toast("t%d" % i)
-	assert_true(main.hud._toasts.get_child_count() <= 3, "at most three toasts on screen")
+	assert_true(main.hud.toast_count() <= 3, "at most three toasts on screen")
+	assert_true(main.hud._toasts.get_child_count() <= 6, "fading ones don't pile up")
 	assert_eq(main.hud.toast_text(), "t5")
 	_free(main)
 
@@ -167,6 +172,38 @@ func test_camera_zoom_eases_to_target() -> void:
 	assert_near(cam.zoom.x, 1.0, 0.01, "reduce motion: instant")
 	cam.get_parent().remove_child(cam)
 	cam.free()
+
+
+func test_zoom_buttons_zoom_the_island() -> void:
+	var main := _main()
+	main.hud.relayout()
+	assert_true(main.hud._zoom_card.visible, "zoom controls show during play")
+	var buttons: Array = main.hud._zoom_card.find_children("*", "Button", true, false)
+	assert_eq(buttons.size(), 2)
+	assert_eq((buttons[0] as Button).tooltip_text, "Zoom in")
+	assert_eq((buttons[1] as Button).tooltip_text, "Zoom out")
+	var z0: float = main.camera.zoom.x
+	(buttons[0] as Button).pressed.emit()
+	for i in 80:
+		main.camera._process(0.02)
+	assert_true(main.camera.zoom.x > z0 * 1.10, "zoom in %f -> %f" % [z0, main.camera.zoom.x])
+	var z1: float = main.camera.zoom.x
+	(buttons[1] as Button).pressed.emit()
+	for i in 80:
+		main.camera._process(0.02)
+	assert_true(main.camera.zoom.x < z1 * 0.92, "zoom out %f -> %f" % [z1, main.camera.zoom.x])
+	var card: Control = main.hud._zoom_card
+	var vp: Vector2 = main.get_viewport().get_visible_rect().size
+	assert_true(card.position.x >= 0.0 and card.position.y >= 0.0, "origin")
+	assert_true(card.position.x + card.size.x <= vp.x + 1.0, "right edge")
+	assert_true(card.position.y + card.size.y <= main.hud._toolbar.position.y + 1.0, "above the toolbar")
+	var v: Vector2i = main.sim.world.coords(main.sim.world.settlement_index)
+	main.select_tile(v)
+	main.hud.relayout()
+	var ir := Rect2(main.hud._inspector.position, main.hud._inspector.size)
+	var zr := Rect2(card.position, card.size)
+	assert_false(ir.intersects(zr), "zoom stays off the inspector")
+	_free(main)
 
 
 func test_camera_flings_after_quick_drag_unless_reduced_motion() -> void:
@@ -271,13 +308,20 @@ func test_resource_chips_are_labelled_and_explain_on_tap() -> void:
 		assert_true(caps.size() >= 2, "%s chip has a value and a caption" % key)
 	var food: Control = main.hud._chips["food"]["panel"]
 	main.hud.explain_chip(food, "wheat")
+	var food0 := roundi(main.sim.world.food_store)
+	assert_true(main.hud.rule_card_text().begins_with("Food: %d stored" % food0), main.hud.rule_card_text())
 	main.hud.explain_chip(food, "wheat")
-	assert_eq(main.hud.toast_text(), "Food stored")
-	var tips := 0
-	for c in main.hud._toasts.get_children():
-		if c.has_meta("chip_tip") and not c.is_queued_for_deletion():
-			tips += 1
-	assert_eq(tips, 1, "repeated taps replace the explanation")
+	assert_eq(main.hud.rule_card_text(), "", "tapping the same chip again closes its card")
+	# the village chip answers "why isn't it growing?" with the real growth checks
+	var people: Control = main.hud._chips["villagers"]["panel"]
+	main.hud.explain_chip(people, "users")
+	var txt: String = main.hud.rule_card_text()
+	assert_true(txt.contains("Food stored: %d of 30" % food0), txt)
+	assert_true(txt.contains("Next check in"), txt)
+	for key in main.hud._chips:
+		assert_false(main.hud.chip_rules(key).is_empty(), "%s explains itself" % key)
+	main.hud.world_touched()
+	assert_eq(main.hud.rule_card_text(), "", "a map tap closes the card")
 	_free(main)
 
 

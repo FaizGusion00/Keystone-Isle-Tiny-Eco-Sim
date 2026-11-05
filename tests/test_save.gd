@@ -81,8 +81,8 @@ func test_rejects_bad_saves() -> void:
 
 
 func test_compute_catch_up_ticks() -> void:
-	assert_eq(CatchUp.compute_ticks(100.0, SimClock.Speed.NORMAL), 200)
-	assert_eq(CatchUp.compute_ticks(10.0, SimClock.Speed.FAST), 80)
+	assert_eq(CatchUp.compute_ticks(100.0, SimClock.Speed.NORMAL), 100)
+	assert_eq(CatchUp.compute_ticks(10.0, SimClock.Speed.FAST), 40)
 	assert_eq(CatchUp.compute_ticks(3600.0, SimClock.Speed.FAST), CatchUp.MAX_TICKS, "capped")
 	assert_eq(CatchUp.compute_ticks(3600.0, SimClock.Speed.PAUSED), 0, "paused never catches up")
 	assert_eq(CatchUp.compute_ticks(-50.0, SimClock.Speed.NORMAL), 0, "clock went backwards")
@@ -111,7 +111,7 @@ func test_killed_app_restore_then_catch_up_matches() -> void:
 	var live := _busy_sim()
 	live.scenario = null
 	SaveSystem.save_game(live, p, {"speed": SimClock.Speed.NORMAL})
-	live.run(60) # what would have happened had the app kept running for 30 s at 1x
+	live.run(30) # what would have happened had the app kept running for 30 s at 1x
 	var restored: Simulation = SaveSystem.load_game(p)["sim"]
 	var cu := CatchUp.new()
 	cu.begin(restored, CatchUp.compute_ticks(30.0, SimClock.Speed.NORMAL))
@@ -130,9 +130,9 @@ func test_away_summary_from_event_log() -> void:
 	cu.run_all()
 	var text := cu.summary()
 	assert_true(text.begins_with("120 days passed."), text)
-	assert_true(text.contains("Coastal water turned muddy"), text)
+	assert_true(text.contains("The coastal water turned muddy"), text)
 	assert_true(text.contains("Food shortage"), text)
-	assert_true(text.contains("× Soil erosion"), "minor events are counted, not listed")
+	assert_true(text.contains("× Soil washed away"), "minor events are counted, not listed")
 	var quiet := Simulation.create(12345, 32)
 	quiet.run(5)
 	var cu2 := CatchUp.new()
@@ -176,22 +176,27 @@ func test_app_lifecycle_suspend_resume_and_relaunch() -> void:
 	main.save_path = p
 	tree.root.add_child(main)
 	assert_true(main.sim.scenario != null, "first launch starts the tutorial")
-	assert_true(main.hud.popup_text().begins_with("Tutorial"), "intro popup shown")
-	main.hud.dismiss_popup()
+	assert_true(main.guide.active(), "the guided tutorial opens on the map (no wall of text)")
+	main._process(0.016)
+	main.suspend()
+	main._suspended_at -= 100.0
+	main.resume()
+	assert_eq(main.catch_up, null, "a tutorial step waiting to be read keeps the island frozen while away")
+	main.guide.stop(true)
+	main._process(0.016)
 	var start_sum: String = main.sim.state_checksum()
 	# app goes to background: immediate atomic autosave + frozen clock
 	main._notification(Node.NOTIFICATION_APPLICATION_PAUSED)
 	assert_true(FileAccess.file_exists(p), "autosaved on pause")
 	assert_true(main.clock.blocked)
 	assert_eq(SaveSystem.load_game(p)["sim"].state_checksum(), start_sum)
-	# 50 s pass in the background at 1x → 100 catch-up ticks on resume
-	main._suspended_at -= 50.0
+	# 100 s pass in the background at 1x → 100 catch-up ticks on resume
+	main._suspended_at -= 100.0
 	main._notification(Node.NOTIFICATION_APPLICATION_RESUMED)
 	assert_true(main.catch_up != null and main.catch_up.total == 100, "catch-up scheduled")
 	while main.catch_up != null:
 		main._process(0.016)
-	var ref := Simulation.create(Scenario.TUTORIAL_SEED, 32)
-	ref.scenario = Scenario.tutorial()
+	var ref := ScenarioCatalog.create_sim(ScenarioCatalog.get_def(Scenario.TUTORIAL_ID))
 	ref.run(100)
 	assert_eq(main.sim.state_checksum(), ref.state_checksum(), "catch-up == normal play")
 	assert_true(main.hud.popup_text().begins_with("While you were away"), main.hud.popup_text())
@@ -252,7 +257,7 @@ func test_menu_or_pause_screen_freezes_time_away() -> void:
 	main.suspend()
 	main._suspended_at -= 10.0
 	main.resume()
-	assert_true(main.catch_up != null and main.catch_up.total == 20, "running game catches up")
+	assert_true(main.catch_up != null and main.catch_up.total == 10, "running game catches up")
 	tree.root.remove_child(main)
 	main.free()
 	SaveSystem.delete_all(p)

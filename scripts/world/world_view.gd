@@ -77,6 +77,20 @@ var _shade := PackedFloat32Array()     ## per-corner light factor from the local
 var _corner_fill := PackedByteArray()  ## per water tile: concave shore corners to fill
 var _cur := PackedVector2Array()       ## top face of the tile being drawn
 var highlight: TileHighlight
+var placement: PlacementOverlay
+var fx: WorldFx
+var auto_fx := true                    ## animate changes the simulation makes (crops, cottages)
+var _fx_hide := PackedByteArray()      ## tiles whose decoration WorldFx is drawing right now
+var _plume := PackedFloat32Array()     ## visual mud in the sea: lingers, spreads, settles (view only)
+var _plume_tmp := PackedFloat32Array()
+var vitality := 1.0                    ## eased island health 0..1 fed to the world / water shaders
+var _vitality_target := 1.0
+var _recording := false
+var _auto_changes: Array[int] = []
+var _rec: Array = []
+var guide_marker: GuideMarker
+var threads: RippleThreads
+var fish: FishSchools
 var water: Node2D
 var _water_mat: ShaderMaterial
 var _world_mat: ShaderMaterial
@@ -96,10 +110,37 @@ func _ready() -> void:
 	water.z_index = -1
 	water.draw.connect(_draw_water)
 	add_child(water)
+	fish = FishSchools.new()
+	fish.name = "Fish"
+	fish.view = self
+	fish.z_index = -1
+	add_child(fish)
+	texture_filter = CanvasItem.TEXTURE_FILTER_LINEAR_WITH_MIPMAPS  # no shimmer when zoomed out
+	fx = WorldFx.new()
+	fx.name = "Fx"
+	fx.view = self
+	fx.z_index = 8
+	add_child(fx)
+	placement = PlacementOverlay.new()
+	placement.name = "Placement"
+	placement.view = self
+	placement.z_index = 9
+	placement.visible = false
+	add_child(placement)
 	highlight = TileHighlight.new()
 	highlight.view = self
 	highlight.z_index = 10
 	add_child(highlight)
+	threads = RippleThreads.new()
+	threads.name = "Threads"
+	threads.view = self
+	threads.z_index = 13
+	add_child(threads)
+	guide_marker = GuideMarker.new()
+	guide_marker.view = self
+	guide_marker.z_index = 12
+	guide_marker.visible = false
+	add_child(guide_marker)
 
 
 ## Reduce-motion turns wind sway, flicker and wave motion off.
@@ -115,6 +156,8 @@ func set_wind(w: float) -> void:
 
 
 func set_world(ws: WorldState, ev: EventLog = null) -> void:
+	if fx != null:
+		fx.finish_all()  # before the arrays are resized for the new island
 	world = ws
 	events = ev
 	for c in _chunks:
@@ -140,7 +183,24 @@ func set_world(ws: WorldState, ev: EventLog = null) -> void:
 			c.y1 = mini(c.y0 + CHUNK, ws.height)
 			add_child(c)
 			_chunks.append(c)
+	_fx_hide.resize(n)
+	_fx_hide.fill(0)
+	_plume.resize(n)
+	_plume.fill(0.0)
+	_plume_tmp.resize(n)
+	vitality = vitality_for(ws.keystone)
+	_vitality_target = vitality
+	_apply_vitality()
+	move_child(fx, -1)
+	move_child(placement, -1)
 	move_child(highlight, -1)
+	fish.set_world()
+	move_child(threads, -1)
+	move_child(guide_marker, -1)
+	threads.clear()
+	threads.preview_runoff(Vector2i(-1, -1))
+	placement.clear()
+	guide_marker.set_tile(Vector2i(-1, -1))
 	_data_img = Image.create(ws.width, ws.height, false, Image.FORMAT_RGBA8)
 	_data_tex = ImageTexture.create_from_image(_data_img)
 	_data_bytes.resize(n * 4)
@@ -306,6 +366,14 @@ func refresh(force: bool = false) -> int:
 		var d := deco_key(i)
 		var k := (int(c.to_rgba32()) & 0xffffffff) | (d << 32)
 		if force or k != _keys[i]:
+			if auto_fx and not force and _keys[i] != -1:
+				var od := _deco[i]
+				# a crop stage changed / a cottage went up: let it pop in instead of swapping
+				var crop_new := ((d >> 3) & 7)
+				var crop_changed := ((od >> 3) & 7) != crop_new and crop_new >= 1 and crop_new <= 3
+				var cottage_up := ((d >> 18) & 1) == 1 and ((od >> 18) & 1) == 0
+				if crop_changed or cottage_up:
+					_auto_changes.append(i)
 			_keys[i] = k
 			_deco[i] = d
 			tile_colors[i] = c
@@ -329,6 +397,10 @@ func refresh(force: bool = false) -> int:
 					if j >= 0 and j < n and _corner_fill[j] != 0:
 						@warning_ignore("integer_division")
 						_dirty[((j / w) / CHUNK) * _chunks_x + (j % w) / CHUNK] = 1
+	if not _auto_changes.is_empty():
+		for k in mini(_auto_changes.size(), 8):
+			fx.grow(_auto_changes[k], "grow" if (_deco[_auto_changes[k]] >> 18) & 1 == 1 else "pop")
+		_auto_changes.clear()
 	var redrawn := 0
 	for ci in _dirty.size():
 		if _dirty[ci] == 1:
@@ -344,6 +416,7 @@ func _update_water_data() -> void:
 	var n := world.tile_count()
 	var lt := world.land_type
 	var mud_boost := 1.6 if overlay == Overlay.WATER else 1.0
+	_spread_plume()
 	for i in n:
 		var t: int = lt[i]
 		var o := i * 4
@@ -351,12 +424,76 @@ func _update_water_data() -> void:
 		_data_bytes[o] = 255 if land else 0
 		var mud := 0.0
 		if not land:
-			mud = clampf(world.sediment[i] * 10.0 * mud_boost, 0.0, 0.85)
+			mud = clampf(_plume[i] * mud_boost, 0.0, 1.0)
 		_data_bytes[o + 1] = int(mud * 255.0)
 		_data_bytes[o + 2] = 0 if land else int(clampf(1.0 - world.elevation[i] / IslandGenerator.SHALLOW_MAX, 0.0, 1.0) * 255.0)
 		_data_bytes[o + 3] = 255
 	_data_img.set_data(world.width, world.height, false, Image.FORMAT_RGBA8, _data_bytes)
 	_data_tex.update(_data_img)
+
+
+## The sea's mud as the player sees it: fresh sediment shows at once, then the cloud drifts
+## into neighbouring water and settles over a month or two, so a cleared hill leaves a visible
+## brown plume instead of a few tiles that flicker for a day. Visual only (rules use sediment).
+const PLUME_DECAY := 0.982   ## per update: a plume fades over a month or two
+const PLUME_REACH := 0.70    ## each tile of open water further from the mud: this much of it
+
+
+func _spread_plume() -> void:
+	var w := world.width
+	var h := world.height
+	var lt := world.land_type
+	var sed := world.sediment
+	for i in world.tile_count():
+		if lt[i] > LandType.SHALLOW_WATER:
+			_plume_tmp[i] = 0.0
+			continue
+		var x := i % w
+		var y := i / w
+		var nb := 0.0
+		if x > 0 and lt[i - 1] <= LandType.SHALLOW_WATER:
+			nb = _plume[i - 1]
+		if x < w - 1 and lt[i + 1] <= LandType.SHALLOW_WATER:
+			nb = maxf(nb, _plume[i + 1])
+		if y > 0 and lt[i - w] <= LandType.SHALLOW_WATER:
+			nb = maxf(nb, _plume[i - w])
+		if y < h - 1 and lt[i + w] <= LandType.SHALLOW_WATER:
+			nb = maxf(nb, _plume[i + w])
+		var v := maxf(_plume[i], nb * PLUME_REACH) * PLUME_DECAY
+		_plume_tmp[i] = maxf(clampf(sed[i] * 10.0, 0.0, 1.0), v if v > 0.01 else 0.0)
+	var sw := _plume
+	_plume = _plume_tmp
+	_plume_tmp = sw
+
+
+## How muddy the sea looks at tile i (0..1), as drawn.
+func plume_at(i: int) -> float:
+	return _plume[i] if i < _plume.size() else 0.0
+
+
+static func vitality_for(keystone: float) -> float:
+	return smoothstep(40.0, 90.0, keystone)
+
+
+func set_vitality_target(keystone: float) -> void:
+	_vitality_target = vitality_for(keystone)
+	set_process(true)
+
+
+func _process(delta: float) -> void:
+	if absf(vitality - _vitality_target) < 0.002:
+		vitality = _vitality_target
+		_apply_vitality()
+		set_process(false)
+		return
+	vitality = lerpf(vitality, _vitality_target, 1.0 - exp(-delta * 1.2))
+	_apply_vitality()
+
+
+func _apply_vitality() -> void:
+	if _world_mat != null:
+		_world_mat.set_shader_parameter("vitality", vitality)
+		_water_mat.set_shader_parameter("vitality", vitality)
 
 
 func set_overlay(o: int) -> void:
@@ -474,6 +611,9 @@ func deco_key(i: int) -> int:
 			k |= 1 << bit
 		bit += 1
 	k |= (1 if overlay != Overlay.NONE else 0) << 25
+	k |= mini(3, int(world.erosion_accum[i] * 25.0)) << 28         # 2 bits: fresh gullies
+	if _fx_hide.size() > i and _fx_hide[i] != 0:
+		k |= 1 << 30                                               # WorldFx draws this tile's decoration
 	return k
 
 
@@ -609,10 +749,16 @@ func draw_tile(cv: CanvasItem, x: int, y: int) -> void:
 		_vary(col, x + 1, y) * _lit(y * cw + x + 1) * (_occl(x + 1, y) if ao else Color.WHITE),
 		_vary(col, x + 1, y + 1) * _lit((y + 1) * cw + x + 1) * (_occl(x + 1, y + 1) if ao else Color.WHITE),
 		_vary(col, x, y + 1) * _lit((y + 1) * cw + x) * (_occl(x, y + 1) if ao else Color.WHITE)]), NO_UV)
+	var deco := _deco[i]
+	var scars := (deco >> 28) & 3
+	if scars > 0 and overlay == Overlay.NONE:
+		_draw_gullies(cv, i, top, scars)
+	if (deco >> 30) & 1:
+		_draw_streams(cv, x, y, i, top, deco)
+		return  # WorldFx is animating what stands here
 	if overlay != Overlay.NONE:
 		_draw_structure(cv, i, top)
 		return
-	var deco := _deco[i]
 	var reservoir := (deco >> 15) & 3
 	if reservoir > 0:
 		var a := 0.35 + 0.18 * reservoir
@@ -704,6 +850,8 @@ const SHADOW := Color(1, 1, 1, 0.5)
 
 
 func _cast_shadow(cv: CanvasItem, at: Vector2, rx: float, reach: float) -> void:
+	if _recording:
+		return
 	var r: Array = ArtAtlas.R["cast_shadow"]
 	var c := at + Vector2(rx * 0.42 * reach, rx * 0.1 * reach)
 	var sz := Vector2(rx * 2.1 * (1.0 + 0.35 * reach), rx * 0.95)
@@ -834,7 +982,81 @@ static func _bezier(a: Vector2, c: Vector2, b: Vector2) -> PackedVector2Array:
 	return pts
 
 
+## The sprites drawn on a tile right now, as [name, at, modulate, scale, flip] (for WorldFx).
+func capture_tile(t: Vector2i) -> Array:
+	if world == null or not world.in_bounds(t.x, t.y):
+		return []
+	return capture_index(world.index(t.x, t.y))
+
+
+func capture_index(i: int) -> Array:
+	if world == null or LandType.is_water(world.land_type[i]):
+		return []
+	var p := world.coords(i)
+	var top := top_center(p.x, p.y)
+	var d := deco_key(i) & ~(1 << 30)
+	_recording = true
+	_rec = []
+	if overlay == Overlay.NONE:
+		_draw_structure(null, i, top)
+		_draw_nature(null, p.x, p.y, i, top, d)
+	_recording = false
+	var out := _rec
+	_rec = []
+	return out
+
+
+## Animate a tile that an action just changed (`before` = capture_tile before the action).
+func animate_change(t: Vector2i, action: int, before: Array) -> void:
+	if fx == null or not world.in_bounds(t.x, t.y):
+		return
+	var i := world.index(t.x, t.y)
+	match action:
+		Simulation.Action.CLEAR_TREES:
+			fx.fall(i, before, "fall")
+		Simulation.Action.DEMOLISH:
+			fx.fall(i, before, "sink")
+		_:
+			fx.grow(i, "grow")
+
+
+## Fresh soil loss shows as brown gullies cut downhill (fade as the land recovers).
+func _draw_gullies(cv: CanvasItem, i: int, top: Vector2, level: int) -> void:
+	var dir := Vector2(0.9, 0.45)
+	var j := down[i] if i < down.size() else -1
+	if j >= 0:
+		var a := world.coords(i)
+		var b := world.coords(j)
+		dir = (Iso.tile_to_local(b.x, b.y) - Iso.tile_to_local(a.x, a.y)).normalized()
+	var side := Vector2(-dir.y, dir.x)
+	var col := Color(0.36, 0.24, 0.14, 0.16 + 0.14 * level)
+	var h := hash_of(i, 31)
+	for g in level + 1:
+		var o := side * (float((h >> (g * 3)) % 9) - 4.0) * 1.6 - dir * 7.0
+		var pts := PackedVector2Array()
+		for s in 5:
+			var u := s / 4.0
+			pts.append(top + o + dir * (u * 15.0) + side * sin(u * 6.0 + g * 1.7) * 1.4)
+		cv.draw_polyline(pts, col, 1.3 + 0.3 * level)
+
+
+## Hide / show a tile's decoration in its chunk (WorldFx draws it meanwhile). Redraws one chunk.
+func set_fx_hide(i: int, on: bool) -> void:
+	if _fx_hide.size() <= i or (_fx_hide[i] != 0) == on:
+		return
+	_fx_hide[i] = 1 if on else 0
+	var d := deco_key(i)
+	_deco[i] = d
+	_keys[i] = (int(tile_colors[i].to_rgba32()) & 0xffffffff) | (d << 32)
+	var w := world.width
+	@warning_ignore("integer_division")
+	_chunks[((i / w) / CHUNK) * _chunks_x + (i % w) / CHUNK].queue_redraw()
+
+
 func sprite(cv: CanvasItem, name: String, at: Vector2, mod: Color = Color.WHITE, s: float = 1.0, flip := false) -> void:
+	if _recording:
+		_rec.append([name, at, mod, s, flip])
+		return
 	var r: Array = ArtAtlas.R[name]
 	var sz := Vector2(r[2], r[3]) / ArtAtlas.SCALE * s
 	var anchor := Vector2(r[4], r[5]) / ArtAtlas.SCALE * s
@@ -856,6 +1078,8 @@ func _draw_structure(cv: CanvasItem, i: int, top: Vector2) -> void:
 			sprite(cv, "stall", top + Vector2(-2, 11))
 			# banner flag: a thin pole and pennant in the player's chosen colour
 			var pole := top + Vector2(17, 2)
+			if cv == null:
+				return  # recording sprites only
 			cv.draw_line(pole, pole + Vector2(0, -24), Color("4a3b2c"), 1.5, true)
 			cv.draw_colored_polygon(PackedVector2Array([pole + Vector2(0.5, -24), pole + Vector2(13, -20.5),
 				pole + Vector2(0.5, -16)]), banner_color)
@@ -889,7 +1113,8 @@ func _draw_farm(cv: CanvasItem, i: int, top: Vector2) -> void:
 	var furrow := Color(0.32, 0.22, 0.13, 0.35)
 	for k in range(-2, 3):
 		var o := Vector2(k * 8.0, k * 4.0)
-		cv.draw_line(top + o + Vector2(-13, -6.5) * (1.0 - absf(k) * 0.22), top + o + Vector2(13, 6.5) * (1.0 - absf(k) * 0.22), furrow, 1.6)
+		if cv != null:
+			cv.draw_line(top + o + Vector2(-13, -6.5) * (1.0 - absf(k) * 0.22), top + o + Vector2(13, 6.5) * (1.0 - absf(k) * 0.22), furrow, 1.6)
 	var crop := (_deco[i] >> 3) & 7
 	if crop == 0 or overlay != Overlay.NONE:
 		return

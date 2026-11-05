@@ -13,6 +13,8 @@ const CAMPAIGN := [
 		"objectives": [{"kind": "farms", "target": 1}, {"kind": "villagers", "target": 12}],
 		"deadline": 240, "fail_villagers": 6,
 		"stars": [{"kind": "keystone", "target": 85}, {"kind": "by_day", "target": 150}],
+		## a fuller larder than other islands, so the first harvest visibly tips the village into growth
+		"setup": {"food": 28.0},
 	},
 	{
 		"id": "expanding_village", "kind": "campaign", "index": 2, "title": "The Expanding Village",
@@ -123,6 +125,8 @@ const SANDBOX := {
 	"id": "sandbox", "kind": "sandbox", "index": 0, "title": "Sandbox",
 	"blurb": "Your island, your rules. No goals, no deadline.",
 	"intro": "", "seed": 0, "size": 32, "preset": 0, "objectives": [],
+	## display-only ideas for free play (ticked on the goals card, never end the run)
+	"ideas": [{"kind": "villagers", "target": 15}, {"kind": "harvests", "target": 10}, {"kind": "keystone", "target": 80}],
 }
 
 const SIZES := [24, 32, 48, 64]
@@ -196,7 +200,7 @@ static func _pretty_date(ymd: String) -> String:
 	if ymd.length() != 8 or not ymd.is_valid_int():
 		return ymd
 	var mo := clampi(int(ymd.substr(4, 2)), 1, 12)
-	return "%d %s %s" % [int(ymd.substr(6, 2)), MONTHS[mo - 1], ymd.substr(0, 4)]
+	return "%d %s %s" % [int(ymd.substr(6, 2)), I18n.t(MONTHS[mo - 1]), ymd.substr(0, 4)]
 
 
 ## Picks `count` distinct mutators with a seeded RNG (deterministic for a given seed).
@@ -236,25 +240,25 @@ static func generated_def(id: String) -> Dictionary:
 	}
 	match mode:
 		"daily":
-			d["title"] = "%s · %s" % [md.get("title", "Daily Island"), _pretty_date(key)]
+			d["title"] = I18n.done("%s · %s" % [I18n.t(str(md.get("title", "Daily Island"))), _pretty_date(key)])
 		"weekly":
-			d["title"] = "%s · week of %s" % [md.get("title", "Weekly Expedition"), _pretty_date(key)]
+			d["title"] = I18n.t("%s · week of %s") % [I18n.t(str(md.get("title", "Weekly Expedition"))), _pretty_date(key)]
 		"endless":
-			d["title"] = "%s · island %d" % [md.get("title", "Endless"), world_seed]
+			d["title"] = I18n.t("%s · island %d") % [I18n.t(str(md.get("title", "Endless"))), world_seed]
 	if mode == "endless":
 		d["objectives"] = []
 		d["census"] = [int(md.get("census_start", 6)), int(md.get("census_step", 1)), int(md.get("census_max", 20))]
 		d["blurb"] = "No last day. Every year the weather grows harsher and the census asks for a bigger village."
-		d["intro"] = d["blurb"] + "\n\nAt the end of each year (120 days) the village must count at least %d villagers, then one more each year. Rare events and new species can appear; your score grows with every day survived." % int(md.get("census_start", 6))
+		d["intro"] = I18n.done(I18n.t(d["blurb"]) + I18n.t("\n\nAt the end of each year (120 days) the village must count at least %d villagers, then one more each year. Rare events and new species can appear; your score grows with every day survived.") % int(md.get("census_start", 6)))
 		d["win_text"] = ""
 	else:
 		var days := int(md.get("days", 240))
 		d["objectives"] = [{"kind": "survive", "target": days}]
-		d["blurb"] = "Same island for everyone %s. Last %d days and score as high as you can." % [
-			"today" if mode == "daily" else "this week", days]
-		d["intro"] = d["blurb"] + "\n\nMutators: %s.\nRare events and new species can appear." % ", ".join(
-			muts.map(func(m): return str(ContentDB.mutator(m).get("title", m))))
-		d["win_text"] = "You saw the island through %d days." % days
+		d["blurb"] = I18n.t("Same island for everyone %s. Last %d days and score as high as you can.") % [
+			I18n.t("today") if mode == "daily" else I18n.t("this week"), days]
+		d["intro"] = I18n.done(d["blurb"] + I18n.t("\n\nMutators: %s.\nRare events and new species can appear.") % ", ".join(
+			muts.map(func(m): return I18n.t(str(ContentDB.mutator(m).get("title", m))))))
+		d["win_text"] = I18n.t("You saw the island through %d days.") % days
 	return d
 
 

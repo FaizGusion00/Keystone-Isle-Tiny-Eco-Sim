@@ -21,6 +21,7 @@ var prestige := 0
 var codex_events: Array = []        ## EventLog type names seen (rare events)
 var codex_species := 0              ## species bitmask ever seen
 var banner := "teal"                ## selected cosmetic banner
+var moments: Array = []             ## "first time" explanations already shown (Moments ids)
 var date_seen := ""                 ## newest local date (YYYYMMDD) this profile has seen; see observe_date()
 var profile_id := ""
 var updated_at := 0.0
@@ -70,6 +71,7 @@ func load_dict(d: Dictionary) -> void:
 	banner = str(d.get("banner", "teal"))
 	profile_id = str(d.get("profile_id", ""))
 	updated_at = float(d.get("updated_at", 0.0))
+	moments = (d.get("moments", []) as Array).duplicate() if d.get("moments", []) is Array else []
 	date_seen = str(d.get("date_seen", ""))
 	if not _valid_key(date_seen):
 		date_seen = ""
@@ -84,7 +86,7 @@ func to_dict() -> Dictionary:
 	return {"version": VERSION, "profile_id": profile_id, "updated_at": updated_at, "stars": stars,
 		"achievements": achievements, "games_won": games_won, "bests": bests, "xp": xp,
 		"prestige": prestige, "codex": {"events": codex_events, "species": codex_species}, "banner": banner,
-		"date_seen": date_seen}
+		"date_seen": date_seen, "moments": moments}
 
 
 func save() -> Error:
@@ -290,6 +292,9 @@ func merge(o: Progress) -> void:
 	codex_species |= o.codex_species
 	if o.date_seen > date_seen:
 		date_seen = o.date_seen
+	for m in o.moments:
+		if not moments.has(m):
+			moments.append(m)
 	if o.updated_at > updated_at:
 		banner = o.banner
 		updated_at = o.updated_at

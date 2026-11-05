@@ -36,6 +36,7 @@ var _rng := RandomNumberGenerator.new()
 var _water_tiles := PackedInt32Array()
 var _fish_timer := 0.0
 var _smoke_timer := 0.0
+var _chimney_timer := 1.0
 var _boat: Sprite2D
 var _boat_base := Vector2.ZERO
 var _t := 0.0
@@ -244,39 +245,108 @@ func _sync_walkers() -> void:
 		sp.scale = Vector2.ONE / ArtAtlas.SCALE
 		sp.offset = Vector2(r[2] * 0.5 - r[4], r[3] * 0.5 - r[5])
 		sp.z_index = 1
+		# a soft contact shadow under the feet grounds them on the slope
+		var sh := Sprite2D.new()
+		sh.texture = DOT_TEX
+		sh.modulate = Color(0.05, 0.06, 0.04, 0.32)
+		sh.scale = Vector2(0.34, 0.14) * ArtAtlas.SCALE
+		sh.position = Vector2(0, 0.5) * ArtAtlas.SCALE
+		sh.show_behind_parent = true
+		sp.add_child(sh)
 		add_child(sp)
 		var a := spots[_rng.randi_range(0, spots.size() - 1)] + _jitter()
 		sp.position = a
-		_walkers.append([sp, a, a, 1.0, _rng.randf_range(0.0, 2.5), _rng.randf_range(7.0, 11.0)])
+		# [sprite, from, to, progress, wait, speed, path (remaining waypoints), step phase]
+		_walkers.append([sp, a, a, 1.0, _rng.randf_range(0.0, 2.5), _rng.randf_range(7.0, 11.0), PackedVector2Array(), 0.0])
 
 
 func _jitter() -> Vector2:
-	return Vector2(_rng.randf_range(-12, 12), _rng.randf_range(-5, 5))
+	return Vector2(_rng.randf_range(-8, 8), _rng.randf_range(-3, 3))
+
+
+## A walking route from world point a to b over open land (no forest, water or hills), as tile
+## centres that follow the ground's height. Falls back to a straight line if no route is found.
+func _route(a: Vector2, b: Vector2) -> PackedVector2Array:
+	var ws := view.world
+	var ta := view.pick(view.to_local(a))
+	var tb := view.pick(view.to_local(b))
+	var out := PackedVector2Array()
+	if not ws.in_bounds(ta.x, ta.y) or not ws.in_bounds(tb.x, tb.y) or ta == tb:
+		out.append(b)
+		return out
+	var prev := {ta: ta}
+	var q: Array[Vector2i] = [ta]
+	var head := 0
+	var found := false
+	while head < q.size() and head < 600:
+		var c: Vector2i = q[head]
+		head += 1
+		if c == tb:
+			found = true
+			break
+		for o in [Vector2i(1, 0), Vector2i(-1, 0), Vector2i(0, 1), Vector2i(0, -1)]:
+			var n: Vector2i = c + o
+			if prev.has(n) or not ws.in_bounds(n.x, n.y):
+				continue
+			var t := ws.land_type[ws.index(n.x, n.y)]
+			if n != tb and (LandType.is_water(t) or t == LandType.FOREST or t == LandType.HILLS):
+				continue
+			prev[n] = c
+			q.append(n)
+	if not found:
+		out.append(b)
+		return out
+	var tiles: Array[Vector2i] = []
+	var k := tb
+	while k != ta:
+		tiles.push_front(k)
+		k = prev[k]
+	for t in tiles.slice(0, tiles.size() - 1):
+		out.append(view.position + view.top_center(t.x, t.y) + Vector2(_rng.randf_range(-4, 4), 2.0 + _rng.randf_range(-1.5, 1.5)))
+	out.append(b)
+	return out
 
 
 func _move_walkers(delta: float) -> void:
-	if _walkers.is_empty() or reduce_motion:
+	if _walkers.is_empty():
+		return
+	# too small to see when zoomed far out: don't spend time on them
+	var zoom := get_viewport().get_canvas_transform().get_scale().x if is_inside_tree() else 1.0
+	var show := zoom >= 0.6
+	for w in _walkers:
+		(w[0] as Sprite2D).visible = show
+	if reduce_motion or not show:
 		return
 	var spots: PackedVector2Array
 	for w in _walkers:
 		var sp: Sprite2D = w[0]
 		if w[3] >= 1.0:
-			w[4] -= delta
-			sp.position = w[2]
-			if w[4] > 0.0:
-				continue
-			if spots.is_empty():
-				spots = _walk_spots()
+			var path: PackedVector2Array = w[6]
+			if path.is_empty():
+				w[4] -= delta
+				sp.position = w[2]
+				sp.rotation = 0.0
+				if w[4] > 0.0:
+					continue
 				if spots.is_empty():
-					return
+					spots = _walk_spots()
+					if spots.is_empty():
+						return
+				path = _route(w[2], spots[_rng.randi_range(0, spots.size() - 1)] + _jitter())
+				w[4] = _rng.randf_range(1.0, 4.0)
 			w[1] = w[2]
-			w[2] = spots[_rng.randi_range(0, spots.size() - 1)] + _jitter()
+			w[2] = path[0]
+			path.remove_at(0)
+			w[6] = path
 			w[3] = 0.0
-			w[4] = _rng.randf_range(1.0, 4.0)
 			sp.flip_h = w[2].x < w[1].x
 		var dist := maxf(1.0, (w[2] - w[1]).length())
 		w[3] = minf(1.0, w[3] + delta * w[5] / dist)
-		sp.position = w[1].lerp(w[2], w[3]) + Vector2(0, -absf(sin(w[3] * dist * 0.45)) * 0.9)
+		w[7] = float(w[7]) + delta * w[5] * 0.55
+		var step := sin(float(w[7]))
+		# a little hop and sway with every step
+		sp.position = w[1].lerp(w[2], w[3]) + Vector2(0, -absf(step) * 1.4)
+		sp.rotation = step * 0.07
 
 
 func _process(delta: float) -> void:
@@ -320,6 +390,15 @@ func _process(delta: float) -> void:
 		if ws.sediment[i] < 0.03:
 			var c := ws.coords(i)
 			_spawn_sprite("fish", view.position + Iso.tile_to_local(c.x, c.y) + Vector2(_rng.randf_range(-12, 12), _rng.randf_range(-5, 5)), -1, 1.1, Vector2(0, -5))
+	_chimney_timer -= delta
+	if _chimney_timer <= 0.0:
+		_chimney_timer = _rng.randf_range(1.6, 2.6)
+		var wv := view.world
+		if wv.settlement_index >= 0 and wv.food_ema > 0.9 and not reduce_motion:
+			# a fed village: smoke curls from the hall's chimney
+			var hc := wv.coords(wv.settlement_index)
+			_spawn_sprite("smoke", view.position + view.top_center(hc.x, hc.y) + Vector2(8, -30), 2, 3.2,
+				Vector2(_rng.randf_range(6, 14), -26))
 	_smoke_timer -= delta
 	if _smoke_timer <= 0.0:
 		_smoke_timer = 0.35
@@ -366,6 +445,25 @@ func pop(tile: Vector2i, color: Color = Color(1, 0.95, 0.75)) -> void:
 	ring.still = reduce_motion
 	ring.z_index = 30
 	add_child(ring)
+
+
+## Planting / restoring: leaves and sparkles rise and a green ring spreads over the tile.
+func bloom(tile: Vector2i) -> void:
+	if view == null:
+		return
+	pop(tile, Color(0.62, 0.95, 0.55))
+	if reduce_motion:
+		return
+	var at := view.position + view.top_center(tile.x, tile.y)
+	burst(at + Vector2(0, -2), Color(0.55, 0.92, 0.45, 0.95), Color(0.85, 1.0, 0.6, 0.0), 16, 1.0, 40.0)
+
+
+## A puff of dust where trees came down or a building was taken apart.
+func dust(tile: Vector2i) -> void:
+	if view == null or reduce_motion:
+		return
+	burst(view.position + view.top_center(tile.x, tile.y) + Vector2(0, -4), Color(0.80, 0.70, 0.55, 0.85),
+		Color(0.62, 0.52, 0.40, 0.0), 12, 0.7, 30.0)
 
 
 ## "−2 labor" style text that rises off a tile and fades (cost / gain feedback).
