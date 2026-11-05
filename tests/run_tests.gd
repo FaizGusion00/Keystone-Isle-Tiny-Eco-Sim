@@ -73,4 +73,8 @@ func _run_all() -> void:
 					print("       ", inst.failures[i])
 	print("\n%d passed, %d failed (%d ms)" % [passed, failed, Time.get_ticks_msec() - t0])
 	I18n.shutdown()
+	# let the audio mixer release sounds the last tests started (else Ogg playbacks "leak" at exit)
+	await create_timer(0.6).timeout
+	await process_frame
+	await process_frame
 	quit(1 if failed > 0 else 0)

@@ -308,14 +308,15 @@ func test_resource_chips_are_labelled_and_explain_on_tap() -> void:
 		assert_true(caps.size() >= 2, "%s chip has a value and a caption" % key)
 	var food: Control = main.hud._chips["food"]["panel"]
 	main.hud.explain_chip(food, "wheat")
-	assert_true(main.hud.rule_card_text().begins_with("Food: 28 stored"), main.hud.rule_card_text())
+	var food0 := roundi(main.sim.world.food_store)
+	assert_true(main.hud.rule_card_text().begins_with("Food: %d stored" % food0), main.hud.rule_card_text())
 	main.hud.explain_chip(food, "wheat")
 	assert_eq(main.hud.rule_card_text(), "", "tapping the same chip again closes its card")
 	# the village chip answers "why isn't it growing?" with the real growth checks
 	var people: Control = main.hud._chips["villagers"]["panel"]
 	main.hud.explain_chip(people, "users")
 	var txt: String = main.hud.rule_card_text()
-	assert_true(txt.contains("Food stored: 28 of 30"), txt)
+	assert_true(txt.contains("Food stored: %d of 30" % food0), txt)
 	assert_true(txt.contains("Next check in"), txt)
 	for key in main.hud._chips:
 		assert_false(main.hud.chip_rules(key).is_empty(), "%s explains itself" % key)

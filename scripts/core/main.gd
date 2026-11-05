@@ -187,6 +187,9 @@ func apply_settings() -> void:
 		_retranslate()
 	var calm := bool(settings.get_value("reduce_motion"))
 	world_view.set_motion(not calm)
+	world_view.fx.enabled = not calm
+	if calm:
+		world_view.fx.finish_all()
 	ambience.reduce_motion = calm
 	UiKit.reduce_motion = calm
 	UiKit.haptics = bool(settings.get_value("haptics"))
@@ -568,6 +571,7 @@ func set_simulation(s: Simulation) -> void:
 func set_speed(s: int) -> void:
 	clock.set_speed(s)
 	hud.set_speed(s)
+	_update_fx_gate()
 	if guide != null:
 		guide.on_speed(s)
 
@@ -624,6 +628,8 @@ func try_action(action: int, t: Vector2i) -> bool:
 	sim.apply_action(action, t.x, t.y)
 	world_view.refresh()
 	world_view.animate_change(t, action, before)
+	if action == Simulation.Action.CLEAR_TREES or action == Simulation.Action.DEMOLISH:
+		ambience.dust(t)
 	ambience.pop(t)
 	ambience.float_text(t, _delta_text(sim.world.labor - labor0, sim.world.wood - wood0),
 		Color(1.0, 0.93, 0.80))
@@ -839,6 +845,13 @@ func _toast_new_events() -> void:
 		shown += 1
 
 
+## Map animations: none while catching up or at the fastest speed (too much changes per second).
+func _update_fx_gate() -> void:
+	if world_view == null or world_view.fx == null:
+		return
+	world_view.auto_fx = world_view.fx.enabled and catch_up == null and clock.speed != SimClock.Speed.FAST
+
+
 ## How often each growth condition was missing at the village's growth checks this run.
 var growth_blockers := {}
 var _growth_check := 0
@@ -875,6 +888,7 @@ func growth_blocker_text() -> String:
 
 func _on_ticked(count: int) -> void:
 	_track_growth()
+	_update_fx_gate()
 	_refresh_ui()
 	guide.on_tick()
 	if world_view.placement.visible and Time.get_ticks_msec() / 1000.0 - _place_refresh_at > 0.5:

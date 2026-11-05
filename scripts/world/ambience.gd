@@ -368,6 +368,14 @@ func pop(tile: Vector2i, color: Color = Color(1, 0.95, 0.75)) -> void:
 	add_child(ring)
 
 
+## A puff of dust where trees came down or a building was taken apart.
+func dust(tile: Vector2i) -> void:
+	if view == null or reduce_motion:
+		return
+	burst(view.position + view.top_center(tile.x, tile.y) + Vector2(0, -4), Color(0.80, 0.70, 0.55, 0.85),
+		Color(0.62, 0.52, 0.40, 0.0), 12, 0.7, 30.0)
+
+
 ## "−2 labor" style text that rises off a tile and fades (cost / gain feedback).
 ## With reduce motion it fades in place instead of rising.
 func float_text(tile: Vector2i, text: String, color: Color = Color(1, 1, 1)) -> Label:

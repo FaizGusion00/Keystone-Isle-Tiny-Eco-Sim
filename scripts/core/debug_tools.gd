@@ -162,6 +162,18 @@ static func handle_cmdline(main: Node) -> void:
 	if args.has("chip"):  # --chip=villagers|food|… : open that chip's explanation card
 		await main.get_tree().process_frame
 		main.hud.explain_chip(main.hud._chips[String(args["chip"])]["panel"], "info")
+	if args.has("act"):  # --act=clear|farm|house : do that next to the village after a moment (fx shots)
+		await main.get_tree().create_timer(0.6).timeout
+		var A := Simulation.Action
+		var act: int = {"clear": A.CLEAR_TREES, "farm": A.BUILD_FARM, "house": A.BUILD_HOUSE, "plant": A.PLANT_TREES}.get(String(args["act"]), A.CLEAR_TREES)
+		var vc: Vector2i = main.sim.world.coords(main.sim.world.settlement_index)
+		var done := 0
+		for r in range(1, 6):
+			for dy in range(-r, r + 1):
+				for dx in range(-r, r + 1):
+					if done < 3 and main.sim.can_apply(act, vc.x + dx, vc.y + dy) == "":
+						main.try_action(act, Vector2i(vc.x + dx, vc.y + dy))
+						done += 1
 	if args.has("perf"):
 		_perf(main, int(args["perf"]))
 	elif args.has("screenshot"):
