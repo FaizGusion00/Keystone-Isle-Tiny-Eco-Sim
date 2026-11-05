@@ -17,6 +17,8 @@ static func open_main(main: Node) -> void:
 		main.hud.end_coach()
 	main.hud.set_available([], [], [], true)
 	main.clock.teaching = false
+	if main.screens.is_open():
+		main.screens.close()
 
 
 func assert_true(cond: bool, msg: String = "") -> void:

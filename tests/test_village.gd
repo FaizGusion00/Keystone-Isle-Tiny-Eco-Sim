@@ -4,6 +4,8 @@ extends TestCase
 
 
 func _main() -> Node:
+	DirAccess.make_dir_recursive_absolute("user://test_ui")
+	SaveSystem.delete_all("user://test_ui/village.json")
 	var main = (load("res://scenes/world/main.tscn") as PackedScene).instantiate()
 	main.save_path = "user://test_ui/village.json"
 	(Engine.get_main_loop() as SceneTree).root.add_child(main)
@@ -47,9 +49,12 @@ func test_walk_routes_stay_on_open_ground() -> void:
 func test_village_pin_when_zoomed_out_and_tap_flies_there() -> void:
 	var main := _main()
 	await main.get_tree().create_timer(0.8).timeout  # let the island framing tween finish
+	main.camera._glide_to = Vector2.INF  # stop any glide / eased zoom still running
+	main.camera._zoom_target = 0.0
 	main.camera.zoom = Vector2(0.6, 0.6)
 	var v: Vector2i = main.sim.world.coords(main.sim.world.settlement_index)
 	main.camera.position = main.world_view.position + main.world_view.top_center(v.x, v.y)
+	await main.get_tree().process_frame
 	await main.get_tree().process_frame
 	main._process(0.016)
 	assert_true(main.hud._village_pin.visible, "pin shows over the village when zoomed out")

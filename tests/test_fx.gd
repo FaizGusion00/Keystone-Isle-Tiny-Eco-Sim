@@ -78,6 +78,8 @@ func test_cap_and_reduce_motion() -> void:
 
 
 func test_actions_animate_in_the_game() -> void:
+	DirAccess.make_dir_recursive_absolute("user://test_ui")
+	SaveSystem.delete_all("user://test_ui/fx.json")
 	var main = (load("res://scenes/world/main.tscn") as PackedScene).instantiate()
 	main.save_path = "user://test_ui/fx.json"
 	(Engine.get_main_loop() as SceneTree).root.add_child(main)
