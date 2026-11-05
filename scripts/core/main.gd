@@ -72,6 +72,9 @@ func _ready() -> void:
 	add_child(guide)
 	guide.finished.connect(_on_guide_finished)
 	hud.guide_resolver = _guide_rect
+	hud.village_pin_pressed.connect(func() -> void:
+		focus_village()
+		select_tile(sim.world.coords(sim.world.settlement_index)))
 	hud.guide_next_requested.connect(func() -> void: guide.next())
 	hud.guide_skip_requested.connect(skip_tutorial)
 	hud.chip_explained.connect(func(key: String) -> void: guide.on_chip(key))
@@ -260,6 +263,22 @@ func start_tutorial() -> void:
 	else:
 		hud.show_popup(I18n.f("Tutorial: %s", I18n.t(s.scenario.title())), I18n.t(s.scenario.intro_text()), "compass")
 	autosave()
+
+
+## When zoomed out, a pin marks the village (it is only a few pixels then); tap it to fly there.
+const PIN_ZOOM := 0.95
+
+
+func _place_village_pin() -> void:
+	if sim == null or sim.world.settlement_index < 0 or screens.is_open() or camera.zoom.x >= PIN_ZOOM 			or hud.guide_active():
+		hud.place_village_pin(Vector2.INF, 0)
+		return
+	var v := sim.world.coords(sim.world.settlement_index)
+	var at := get_viewport().get_canvas_transform() * world_view.to_global(world_view.top_center(v.x, v.y))
+	if not get_viewport().get_visible_rect().grow(-20).has_point(at):
+		hud.place_village_pin(Vector2.INF, 0)
+		return
+	hud.place_village_pin(at, sim.world.villagers)
 
 
 ## Ease the camera onto the village (the guide's first stop).
@@ -1155,6 +1174,7 @@ func _process(delta: float) -> void:
 		hud.place_guide()
 	elif world_view.guide_marker.visible:
 		world_view.guide_marker.set_tile(Vector2i(-1, -1))
+	_place_village_pin()
 	if screens != null and screens.current == "menu" and not UiKit.reduce_motion and sim != null:
 		# slow cinematic drift around the framed island behind the title screen (fades in after the framing tween)
 		_menu_pan += delta * 0.12

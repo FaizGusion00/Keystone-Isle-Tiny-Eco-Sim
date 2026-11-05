@@ -220,6 +220,7 @@ func _ready() -> void:
 	_build_toasts()
 	_build_award()
 	_build_place_tag()
+	_build_village_pin()
 	_build_tool_hint()
 	_rule_card = RuleCard.new()
 	root.add_child(_rule_card)
@@ -2051,6 +2052,43 @@ func notification_rects() -> Array[Rect2]:
 		if c is Control and (c as Control).visible and not c.is_queued_for_deletion():
 			out.append((c as Control).get_global_rect())
 	return out
+
+
+# ================================================================== village pin
+
+signal village_pin_pressed
+var _village_pin: Button
+
+
+## A small "Village · 10" tag over the village when the island is zoomed out (it is tiny then).
+func _build_village_pin() -> void:
+	_village_pin = UiKit.button("", Vector2(0, 40), "home", "Chip")
+	_village_pin.visible = false
+	_village_pin.add_theme_font_size_override("font_size", 15)
+	_village_pin.pressed.connect(func() -> void: village_pin_pressed.emit())
+	root.add_child(_village_pin)
+
+
+## at = the village's screen position (viewport px), or Vector2.INF to hide.
+func place_village_pin(at: Vector2, villagers: int) -> void:
+	if at == Vector2.INF:
+		if _village_pin.visible:
+			Motion.disappear(_village_pin, Vector2(0, 6), Motion.FAST)
+		return
+	_village_pin.text = I18n.f("Village · %d", villagers)
+	_village_pin.reset_size()
+	var s := root.get_global_transform_with_canvas().get_scale()
+	var p := (at - root.global_position) / s - Vector2(_village_pin.size.x * 0.5, _village_pin.size.y + 34.0)
+	_village_pin.position = p.clamp(Vector2(8, 8), root.size - _village_pin.size - Vector2(8, 8))
+	if not _village_pin.visible or Motion.animating(_village_pin):
+		Motion.stop(_village_pin)
+		_village_pin.modulate.a = 1.0
+		_village_pin.visible = true
+		Motion.appear(_village_pin, Vector2(0, 8), Motion.BASE)
+
+
+func village_pin_visible() -> bool:
+	return _village_pin.visible and not Motion.animating(_village_pin)
 
 
 # ================================================================== tool hint
