@@ -205,6 +205,13 @@ func _unhandled_input(event: InputEvent) -> void:
 			user_moved = true
 			var target := clampf(_pinch_zoom * a.distance_to(b) / _pinch_dist, MIN_ZOOM, MAX_ZOOM)
 			zoom_at((a + b) * 0.5, target / zoom.x)
+	elif event is InputEventMagnifyGesture:
+		var mg := event as InputEventMagnifyGesture
+		_glide_to = Vector2.INF
+		fling = Vector2.ZERO
+		if mg.factor > 0.0:
+			zoom_smooth(mg.position, mg.factor)
+		get_viewport().set_input_as_handled()
 	elif event is InputEventKey and event.pressed:
 		var k := event as InputEventKey
 		if k.keycode in [KEY_EQUAL, KEY_PLUS, KEY_KP_ADD]:

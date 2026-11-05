@@ -13,6 +13,7 @@ var _menu_view := {}  ## camera pos/zoom saved while the title menu frames the i
 @onready var hud: Hud = $HUD
 @onready var clock: SimClock = $Clock
 var ambience: Ambience
+var guide: Guide
 var _teaching := false  ## tutorial intro / coach tips still on screen: hold the clock
 var audio: AudioDirector
 var screens: Screens
@@ -63,6 +64,18 @@ func _ready() -> void:
 	hud.menu_requested.connect(pause_game)
 	hud.tile_closed.connect(func() -> void: select_tile(Vector2i(-1, -1)))
 	hud.tool_selected.connect(_on_tool_selected)
+	hud.zoom_requested.connect(func(factor: float) -> void:
+		camera.zoom_smooth(get_viewport().get_visible_rect().size * 0.5, factor))
+	guide = Guide.new()
+	guide.name = "Guide"
+	guide.main = self
+	add_child(guide)
+	guide.finished.connect(_on_guide_finished)
+	hud.guide_resolver = _guide_rect
+	hud.guide_next_requested.connect(func() -> void: guide.next())
+	hud.guide_skip_requested.connect(skip_tutorial)
+	hud.chip_explained.connect(func(key: String) -> void: guide.on_chip(key))
+	action_done.connect(func(a: int, t: Vector2i) -> void: guide.on_action(a, t))
 	camera.hover_moved.connect(_on_hover)
 	audio = AudioDirector.new()
 	audio.name = "Audio"
@@ -96,6 +109,8 @@ func _ready() -> void:
 		open_menu()   # returning players land on the title screen with Continue
 	elif persistence or args.has("--tutorial"):
 		start_tutorial()
+		if persistence and settings.first_run and I18n.locked == "":  # (tests lock the language)
+			screens.open("language")  # very first launch: one tap for the language, then the guide
 	else:
 		var sid := ""
 		for a in args:
@@ -124,7 +139,7 @@ func _debug_screen(n: String) -> void:
 			clock.held = true
 			sim.scenario.final_score = 1320
 			sim.scenario.stars = 2
-			sim.scenario.reason = "Final score 1320  ·  silver"
+			sim.scenario.reason = I18n.f("Final score %d  ·  %s", [1320, I18n.t("silver")])
 			progress.xp = 300
 			screens.open("results", {"won": true, "stars": 2, "run": {"xp": 324, "level_up": true, "new_best": true}})
 		"results_won", "results_failed":
@@ -198,6 +213,8 @@ func _retranslate() -> void:
 	hud.set_objective(sim.scenario.objective_text(sim.world) if sim.scenario != null else "")
 	hud.update_objectives(sim)
 	hud.retranslate()
+	if guide.active():
+		hud.show_guide(guide.current(), guide.i, guide.steps.size(), camera.last_was_touch)
 	if hud._insp_tile.x >= 0 and hud._inspector.visible:
 		hud.show_tile(sim, hud._insp_tile)
 
@@ -228,17 +245,104 @@ func new_world(world_seed: int) -> void:
 
 
 func start_tutorial() -> void:
-	var s := Simulation.create(Scenario.TUTORIAL_SEED, MAP_SIZE)
-	s.scenario = Scenario.tutorial()
+	var s := ScenarioCatalog.create_sim(ScenarioCatalog.get_def(Scenario.TUTORIAL_ID))
 	_last_opts = {}
 	screens.close()
 	set_simulation(s)
 	set_speed(SimClock.Speed.NORMAL)
-	hud.show_popup(I18n.f("Tutorial: %s", I18n.t(s.scenario.title())), I18n.t(s.scenario.intro_text()), "compass")
-	_teaching = true  # the clock waits until the intro and the tips are read
 	if bool(settings.get_value("show_tutorial")):
-		hud.queue_coach()
+		# no wall of text: the guide opens on the map and teaches by doing, one step at a time
+		camera.position = world_view.position + world_view.top_center(sim.world.width / 2, sim.world.height / 2)
+		guide.start(GuideSteps.TUTORIAL)
+	else:
+		hud.show_popup(I18n.f("Tutorial: %s", I18n.t(s.scenario.title())), I18n.t(s.scenario.intro_text()), "compass")
 	autosave()
+
+
+## Ease the camera onto the village (the guide's first stop).
+func focus_village() -> void:
+	if sim == null or sim.world.settlement_index < 0:
+		return
+	var v := sim.world.coords(sim.world.settlement_index)
+	camera.user_moved = true
+	camera.glide_to(world_view.position + world_view.top_center(v.x, v.y), maxf(camera.zoom.x, 1.6))
+
+
+## The guide finished (or was skipped): everything the island offers opens up.
+func _on_guide_finished(skipped: bool) -> void:
+	_apply_island_tools(true)
+	if skipped:
+		hud.toast(I18n.t("Tutorial skipped. Tap People any time to see what the village needs."), 4.0, "compass")
+	elif sim != null and sim.scenario != null:
+		hud.award(I18n.t("Tutorial complete"), I18n.t("Well done"), "trophy")
+	autosave()
+
+
+## Tools / numbers this island opens (early campaign islands open fewer, see GuideSteps).
+func _apply_island_tools(announce := false) -> void:
+	var id := sim.scenario.id if sim != null and sim.scenario != null else ""
+	var d: Dictionary = GuideSteps.ISLAND_TOOLS.get(id, {})
+	if d.is_empty():
+		hud.set_available([], [], [], true, announce)
+	else:
+		hud.set_available(d.get("tools", []), d.get("chips", Hud.ALL_CHIPS), d.get("extras", Hud.ALL_EXTRAS), false, announce)
+
+
+## Screen rect (HUD root coords) of a guide target on the map, and the world marker on it.
+func _guide_rect(target: String) -> Rect2:
+	var t := _guide_tile(target)
+	world_view.guide_marker.set_tile(t)
+	if t.x < 0 or not is_inside_tree():
+		return Rect2()
+	var xf := get_viewport().get_canvas_transform()
+	var pts := PackedVector2Array()
+	for p in world_view.top_polygon(t.x, t.y):
+		pts.append(xf * world_view.to_global(p))
+	var r := Rect2(pts[0], Vector2.ZERO)
+	for p in pts:
+		r = r.expand(p)
+	r = r.grow_individual(0, 40.0, 0, 0)  # include the marker arrow above the tile
+	var s := hud.root.get_global_transform_with_canvas().get_scale()
+	return Rect2(r.position / s, r.size / s)
+
+
+func _guide_tile(target: String) -> Vector2i:
+	if sim == null or not target.begins_with("tile:"):
+		return Vector2i(-1, -1)
+	var ws := sim.world
+	match target:
+		"tile:village":
+			return ws.coords(ws.settlement_index)
+		"tile:farm":
+			for i in ws.tile_count():
+				if ws.structure[i] == WorldState.Structure.FARM:
+					return ws.coords(i)
+		"tile:best_farm":
+			return best_farm_tile()
+	return Vector2i(-1, -1)
+
+
+## The farm site the guide suggests: allowed, not on a floodplain, moist, close to the village.
+func best_farm_tile() -> Vector2i:
+	var ws := sim.world
+	var m := ValidTiles.compute(sim, Simulation.Action.BUILD_FARM)
+	var v := ws.coords(ws.settlement_index)
+	var best := Vector2i(-1, -1)
+	var score := -INF
+	for i in m.size():
+		if m[i] != ValidTiles.OK and m[i] != ValidTiles.SHORT:
+			continue
+		var p := ws.coords(i)
+		var sc := ws.soil_moisture[i] * 2.0 - float(maxi(absi(p.x - v.x), absi(p.y - v.y)))
+		# open ground reads best: avoid tiles with forest around them (trees in front hide a farm)
+		for o in [Vector2i(1, 0), Vector2i(0, 1), Vector2i(1, 1), Vector2i(-1, 0), Vector2i(0, -1)]:
+			var q: Vector2i = p + o
+			if ws.in_bounds(q.x, q.y) and ws.land_type[ws.index(q.x, q.y)] == LandType.FOREST:
+				sc -= 1.5
+		if sc > score:
+			score = sc
+			best = p
+	return best
 
 
 ## Campaign / challenge entry point (also used by Next island and Restart).
@@ -261,7 +365,7 @@ func start_scenario(id: String, opts: Dictionary = {}) -> void:
 
 func start_sandbox(opts: Dictionary) -> void:
 	start_scenario("sandbox", opts)
-	hud.toast("New island · seed %d" % sim.world.world_seed, 3.0, "globe")
+	hud.toast(I18n.f("New island · seed %d", sim.world.world_seed), 3.0, "globe")
 
 
 func has_game() -> bool:
@@ -319,13 +423,18 @@ func show_coach() -> void:
 	hud.start_coach()
 
 
+## Skip button on the guide card.
+func skip_tutorial() -> void:
+	guide.stop(true)
+
+
 func save_slot(slot: int) -> void:
 	var err := SaveSystem.save_game(sim, SaveSystem.slot_path(slot), _meta())
 	if err == OK:
-		hud.toast("Saved to slot %d" % (slot + 1), 2.5, "save")
+		hud.toast(I18n.f("Saved to slot %d", slot + 1), 2.5, "save")
 		AudioDirector.sfx("notify")
 	else:
-		hud.toast("Could not save: %s" % error_string(err), 3.0, "triangle-alert", true)
+		hud.toast(I18n.f("Could not save: %s", error_string(err)), 3.0, "triangle-alert", true)
 
 
 func load_slot(path: String) -> void:
@@ -338,14 +447,14 @@ func load_slot(path: String) -> void:
 	screens.close()
 	set_simulation(r["sim"])
 	set_speed(int(r["meta"].get("speed", SimClock.Speed.NORMAL)))
-	hud.toast("Loaded · day %d" % sim.world.tick, 2.5, "folder-open")
+	hud.toast(I18n.f("Loaded · day %d", sim.world.tick), 2.5, "folder-open")
 	autosave()
 
 
 func _meta() -> Dictionary:
-	return {"saved_at": _now(), "speed": clock.speed, "held": clock.held, "day": sim.world.tick, "villagers": sim.world.villagers,
+	return {"saved_at": _now(), "speed": clock.speed, "held": clock.held or clock.teaching, "day": sim.world.tick, "villagers": sim.world.villagers,
 		"keystone": roundi(sim.world.keystone),
-		"title": sim.scenario.title() if sim.scenario != null else "Sandbox"}
+		"title": sim.scenario.title() if sim.scenario != null else "Sandbox", "guide": guide.to_dict()}
 
 
 func _on_screen_changed(screen_name: String) -> void:
@@ -418,8 +527,12 @@ func _land_bounds() -> Rect2:
 
 func set_simulation(s: Simulation) -> void:
 	hud.clear_popups()
+	if guide.active():
+		guide.i = -1
+		hud.hide_guide()
 	if hud.coach_active():
 		hud.end_coach()
+	world_view.guide_marker.set_tile(Vector2i(-1, -1))
 	_teaching = false
 	clock.teaching = false
 	sim = s
@@ -443,13 +556,20 @@ func set_simulation(s: Simulation) -> void:
 	hud.set_day(sim.world.tick)
 	hud.set_status(sim.world)
 	select_tile(Vector2i(-1, -1))
+	_apply_island_tools(false)
 	_clear_preview()
 	refresh_placement()
+	_last_rain_toast = -1000
+	_last_erosion_toast = -1000
+	growth_blockers = {}
+	_growth_check = sim.world.tick / Simulation.POP_PERIOD
 
 
 func set_speed(s: int) -> void:
 	clock.set_speed(s)
 	hud.set_speed(s)
+	if guide != null:
+		guide.on_speed(s)
 
 
 func select_tile(t: Vector2i) -> void:
@@ -458,6 +578,8 @@ func select_tile(t: Vector2i) -> void:
 	selected = t
 	world_view.highlight.set_tile(t)
 	hud.show_tile(sim, t)
+	if guide != null:
+		guide.on_select(t)
 
 
 func pick_tile(screen_pos: Vector2) -> Vector2i:
@@ -594,15 +716,26 @@ func refresh_placement() -> void:
 	_place_refresh_at = Time.get_ticks_msec() / 1000.0
 
 
-func _on_tool_selected(_t: int) -> void:
+func _on_tool_selected(t: int) -> void:
 	AudioDirector.sfx("ui_click")
 	_clear_preview()
 	refresh_placement()
+	guide.on_tool(t)
 
 
 ## Why `action` can't be done on tile `t` ("" if it can), in the player's language.
+## `can_apply` returns English: a whole key, or a cost sentence already filled with numbers.
 func placement_reason(action: int, t: Vector2i) -> String:
-	return I18n.t(sim.can_apply(action, t.x, t.y))
+	var why := sim.can_apply(action, t.x, t.y)
+	if why == "":
+		return ""
+	var c := sim.action_cost(action)
+	var ws: WorldState = sim.world
+	if why.begins_with("Not enough labor:"):
+		return I18n.f("Not enough labor: needs %d, you have %d", [ceili(c.x), floori(ws.labor)])
+	if why.begins_with("Not enough wood:"):
+		return I18n.f("Not enough wood: needs %d, you have %d (clear forest for wood)", [ceili(c.y), floori(ws.wood)])
+	return I18n.t(why)
 
 
 ## "−1 labor  −2 wood" (or "+3 wood" when clearing forest) for the floater over a placed tile.
@@ -653,20 +786,97 @@ func cycle_overlay() -> void:
 	AudioDirector.sfx("ui_click")
 
 
+## New events worth telling the player about, most important first: bad news, then good news,
+## then weather. At most TOAST_BATCH at once; heavy rain at most every RAIN_TOAST_GAP days;
+## soil washing away (the first link of most chains) once a season.
+const TOAST_BATCH := 2
+const RAIN_TOAST_GAP := 10
+const EROSION_TOAST_GAP := 30
+const GOOD_NEWS := [EventLog.Type.POPULATION_GROWTH, EventLog.Type.WATER_CLEARED, EventLog.Type.DROUGHT_ENDED,
+	EventLog.Type.FIRE_OUT, EventLog.Type.SPECIES_ARRIVED]
+var _last_rain_toast := -1000
+var _last_erosion_toast := -1000
+
+
 func _toast_new_events() -> void:
-	var newest := -1
-	for id in range(maxi(_seen_event_id, sim.events.next_id - EventLog.CAPACITY), sim.events.next_id):
-		if sim.events.type_of(id) in EventLog.NOTABLE:
-			newest = id
-	_seen_event_id = sim.events.next_id
-	if newest >= 0:
-		var bad := EventLog.is_bad(sim.events.type_of(newest))
-		hud.toast(EventText.title(sim.events, newest, sim.world), 4.0, Hud.event_icon(sim.events.type_of(newest)), bad)
-		AudioDirector.sfx("warn" if bad else "notify", 1.0, -4.0)
+	var picks: Array = []  # [priority, id]
+	var ev := sim.events
+	for id in range(maxi(_seen_event_id, ev.next_id - EventLog.CAPACITY), ev.next_id):
+		var t := ev.type_of(id)
+		var day := ev.tick_of(id)
+		if t == EventLog.Type.EROSION:
+			if day - _last_erosion_toast < EROSION_TOAST_GAP:
+				continue
+			_last_erosion_toast = day
+			picks.append([2, id])
+			continue
+		if not (t in EventLog.NOTABLE):
+			continue
+		if t == EventLog.Type.HEAVY_RAIN:
+			if day - _last_rain_toast < RAIN_TOAST_GAP:
+				continue
+			_last_rain_toast = day
+		var pr := 3 if EventLog.is_bad(t) else (2 if t in GOOD_NEWS else 1)
+		picks.append([pr, id])
+	_seen_event_id = ev.next_id
+	if picks.is_empty():
+		return
+	# keep the newest of each type, then the most important (newest first within a priority)
+	var by_type := {}
+	for p in picks:
+		by_type[ev.type_of(p[1])] = p
+	var best: Array = by_type.values()
+	best.sort_custom(func(a: Array, b: Array) -> bool: return a[0] > b[0] or (a[0] == b[0] and a[1] > b[1]))
+	var shown := 0
+	for p in best:
+		if shown >= TOAST_BATCH:
+			break
+		var id: int = p[1]
+		var bad := EventLog.is_bad(ev.type_of(id))
+		hud.toast(EventText.title(ev, id, sim.world), 4.5, Hud.event_icon(ev.type_of(id)), bad)
+		if shown == 0:
+			AudioDirector.sfx("warn" if bad else "notify", 1.0, -4.0)
+		shown += 1
+
+
+## How often each growth condition was missing at the village's growth checks this run.
+var growth_blockers := {}
+var _growth_check := 0
+
+
+func _track_growth() -> void:
+	var k := sim.world.tick / Simulation.POP_PERIOD
+	if k == _growth_check:
+		return
+	_growth_check = k
+	var g := sim.growth_status()
+	if g["ready"] or g["leaving"]:
+		return
+	for c in ["fed_ok", "water_ok", "store_ok", "room_ok"]:
+		if not g[c]:
+			growth_blockers[c] = int(growth_blockers.get(c, 0)) + 1
+
+
+## The condition that most often stopped the village growing, in words ("" if none).
+func growth_blocker_text() -> String:
+	var best := ""
+	var n := 0
+	for c in growth_blockers:
+		if int(growth_blockers[c]) > n:
+			n = int(growth_blockers[c])
+			best = c
+	match best:
+		"fed_ok": return I18n.t("The village could not grow: not everyone was fed. Build farms near the village.")
+		"water_ok": return I18n.t("The village could not grow: not enough fresh water near the village.")
+		"store_ok": return I18n.t("The village could not grow: it needs 3 food stored per person. More farms fill the store.")
+		"room_ok": return I18n.t("The village could not grow: every home was full. Build houses.")
+	return ""
 
 
 func _on_ticked(count: int) -> void:
+	_track_growth()
 	_refresh_ui()
+	guide.on_tick()
 	if world_view.placement.visible and Time.get_ticks_msec() / 1000.0 - _place_refresh_at > 0.5:
 		refresh_placement()  # the island changed under the overlay (labor regrew, trees grew…)
 	_toast_new_events()
@@ -739,7 +949,8 @@ func _check_scenario() -> void:
 		hud.show_popup(I18n.f("Island complete! %s" if won else "Island lost: %s", I18n.t(sim.scenario.title())), I18n.t(sim.scenario.reason))
 		return
 	screens.open("results", {"won": won, "stars": sim.scenario.stars, "achievements": fresh,
-		"chain": PackedStringArray() if won else _failure_chain(), "run": run})
+		"chain": PackedStringArray() if won else _failure_chain(), "run": run,
+		"blocker": "" if won else growth_blocker_text()})
 
 
 ## The cause chain behind the most recent population/food/water crisis.
@@ -794,6 +1005,9 @@ func restore_from_disk() -> bool:
 	set_simulation(r["sim"])
 	var speed := int(r["meta"].get("speed", SimClock.Speed.NORMAL))
 	set_speed(speed)
+	var gd: Dictionary = r["meta"].get("guide", {})
+	if gd.has("i") and sim.scenario != null and sim.scenario.id == Scenario.TUTORIAL_ID:
+		guide.start(GuideSteps.TUTORIAL, clampi(int(gd["i"]), 0, GuideSteps.TUTORIAL.size() - 1))
 	if String(r["source"]).ends_with(".bak"):
 		hud.toast("Main save was damaged: restored the backup", 4.0)
 	# a game saved while a menu / pause screen held the clock was frozen: nothing to catch up
@@ -833,7 +1047,7 @@ func resume() -> void:
 	_suspended = false
 	clock.blocked = false
 	# time only passes for a running game: a pause or menu screen keeps the island frozen
-	var speed := SimClock.Speed.PAUSED if clock.held else clock.speed
+	var speed := SimClock.Speed.PAUSED if clock.held or clock.teaching else clock.speed  # a tutorial step waiting to be read too
 	start_catch_up(CatchUp.compute_ticks(_now() - _suspended_at, speed))
 
 
@@ -844,7 +1058,7 @@ func start_catch_up(ticks: int) -> void:
 	catch_up.begin(sim, ticks)
 	clock.blocked = true
 	if ticks >= CatchUp.SUMMARY_MIN_TICKS:
-		hud.toast("Catching up %d days…" % ticks, 2.0)
+		hud.toast(I18n.f("Catching up %d days…", ticks), 2.0)
 
 
 func _unhandled_input(event: InputEvent) -> void:
@@ -857,7 +1071,7 @@ func _unhandled_input(event: InputEvent) -> void:
 				resume_game()
 			elif screens.current != "results" and screens.current != "menu":
 				screens.back()
-		elif hud.coach_active():
+		elif hud.coach_active() and not hud.guide_active():
 			hud.end_coach()
 		elif selected.x >= 0:
 			select_tile(Vector2i(-1, -1))
@@ -870,7 +1084,8 @@ func _unhandled_input(event: InputEvent) -> void:
 		set_speed(SimClock.Speed.NORMAL if clock.speed == SimClock.Speed.PAUSED else SimClock.Speed.PAUSED)
 		get_viewport().set_input_as_handled()
 	elif k >= KEY_1 and k <= KEY_8:
-		hud.select_tool(k - KEY_1)
+		if hud.tool_available(k - KEY_1):
+			hud.select_tool(k - KEY_1)
 		get_viewport().set_input_as_handled()
 	elif k == KEY_L:
 		cycle_overlay()
@@ -919,7 +1134,13 @@ func drain_audio(guard_ms := 3000) -> void:
 func _process(delta: float) -> void:
 	if _teaching:
 		_teaching = hud.coach_active() or hud.popup_open() or hud._coach_pending
-	clock.teaching = _teaching or hud.coach_active()  # tips (first run or replayed) never let days slip by
+	# reading a guide step / tip holds time; "watch it happen" steps let it run
+	clock.teaching = _teaching or guide.holds_clock() or (hud.coach_active() and not hud.guide_active())
+	if guide.active():
+		world_view.guide_marker.set_tile(_guide_tile(str(guide.current().get("target", ""))))
+		hud.place_guide()
+	elif world_view.guide_marker.visible:
+		world_view.guide_marker.set_tile(Vector2i(-1, -1))
 	if screens != null and screens.current == "menu" and not UiKit.reduce_motion and sim != null:
 		# slow cinematic drift around the framed island behind the title screen (fades in after the framing tween)
 		_menu_pan += delta * 0.12

@@ -85,6 +85,31 @@ func test_switching_language_live() -> void:
 	I18n.set_language("en")
 
 
+func test_cost_refusal_is_translated_once() -> void:
+	I18n.locked = ""
+	I18n.set_language("ms")
+	var sim := Simulation.create(12345, 32)
+	sim.world.labor = 0.0
+	sim.world.wood = 0.0
+	var main = (load("res://scenes/world/main.tscn") as PackedScene).instantiate()
+	main.sim = sim
+	var shown := ""
+	for y in sim.world.height:
+		for x in sim.world.width:
+			var raw := sim.can_apply(Simulation.Action.BUILD_FARM, x, y)
+			if raw.begins_with("Not enough labor:"):
+				shown = main.placement_reason(Simulation.Action.BUILD_FARM, Vector2i(x, y))
+				assert_true(raw.begins_with("Not enough labor:"), raw)
+				break
+		if shown != "":
+			break
+	assert_true(shown.begins_with("Tenaga tak cukup:"), shown)
+	assert_false(shown.contains("Not enough"), shown)
+	main.free()
+	I18n.locked = "en"
+	I18n.set_language("en")
+
+
 func test_first_launch_follows_the_device_language() -> void:
 	assert_true(I18n.codes().has(I18n.default_language()))
 	var gs := GameSettings.load_from("user://test_i18n/does_not_exist.cfg")

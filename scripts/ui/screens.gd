@@ -173,6 +173,7 @@ func _build(screen_name: String, animate := true) -> void:
 		"journal": _content = _journal(sz)
 		"codex": _content = _codex(sz)
 		"help": _content = _help(sz)
+		"language": _content = _language(sz)
 		_: _content = Control.new()
 	root.add_child(_content)
 	if _post_fit.is_valid():
@@ -275,6 +276,49 @@ func _stars_row(n: int, size := 22.0) -> HBoxContainer:
 
 # ================================================================== main menu
 
+## First launch: one tap to pick the language (both shown in their own words), then play.
+func _language(sz: Vector2) -> Control:
+	var holder := Control.new()
+	holder.size = sz
+	var card := UiKit.card()
+	var col := UiKit.vbox(14)
+	card.add_child(col)
+	var head := UiKit.hbox(10)
+	head.add_child(UiKit.icon_badge("languages", UiKit.TEAL_SOFT, UiKit.TEAL_DARK, 48))
+	var t := UiKit.vbox(0)
+	var a := UiKit.label("Choose your language", 26, "Title")
+	a.auto_translate_mode = Node.AUTO_TRANSLATE_MODE_DISABLED
+	t.add_child(a)
+	var b := UiKit.label("Pilih bahasa anda", 18, "Caption")
+	b.auto_translate_mode = Node.AUTO_TRANSLATE_MODE_DISABLED
+	t.add_child(b)
+	head.add_child(t)
+	col.add_child(head)
+	var w := minf(420.0, sz.x - 64.0)
+	for l in I18n.LANGUAGES:
+		var code: String = l[0]
+		var btn := UiKit.button(str(l[1]), Vector2(w, 60), "check" if code == I18n.current() else "", "Primary" if code == I18n.current() else "")
+		btn.auto_translate_mode = Node.AUTO_TRANSLATE_MODE_DISABLED
+		btn.pressed.connect(func() -> void:
+			main.change_setting("language", code)
+			close())
+		col.add_child(btn)
+	var note := UiKit.label("You can change this later in Settings · Boleh ditukar dalam Tetapan", 13, "Caption")
+	note.auto_translate_mode = Node.AUTO_TRANSLATE_MODE_DISABLED
+	col.add_child(note)
+	holder.add_child(card)
+	card.reset_size()
+	card.position = (sz - card.get_combined_minimum_size()) * 0.5
+	return holder
+
+
+func _any_slot_saved() -> bool:
+	for k in range(1, SaveSystem.SLOT_COUNT + 1):
+		if FileAccess.file_exists(SaveSystem.slot_path(k)):
+			return true
+	return false
+
+
 func _menu(sz: Vector2) -> Control:
 	var holder := Control.new()
 	holder.size = sz
@@ -292,15 +336,25 @@ func _menu(sz: Vector2) -> Control:
 	brand.add_child(bt)
 	col.add_child(brand)
 	col.add_child(_gap(10))
+	# only what the player can use yet: modes appear as they unlock (no locked doors on day one)
+	var pr0: Progress = main.progress
+	var won1 := pr0.best_stars(ScenarioCatalog.CAMPAIGN[0]["id"]) > 0
 	var items: Array = []
 	if main.has_game():
 		items.append(["Continue", "play", func() -> void: main.resume_game(), true])
-	items.append(["Campaign", "map", func() -> void: open("campaign"), not main.has_game()])
-	items.append(["Daily · Weekly · Endless", "calendar", func() -> void: open("modes"), false])
-	items.append(["Challenges", "flame", func() -> void: open("challenges"), false])
-	items.append(["New world", "globe", func() -> void: open("new_world"), false])
-	items.append(["Load game", "folder-open", func() -> void: open("load"), false])
-	items.append(["Journal", "book-open", func() -> void: open("journal"), false])
+	else:
+		items.append(["Start", "play", func() -> void: main.start_tutorial(), true])
+	items.append(["Campaign", "map", func() -> void: open("campaign"), false])
+	if won1:
+		items.append(["Daily · Weekly · Endless", "calendar", func() -> void: open("modes"), false])
+	if pr0.is_unlocked(ScenarioCatalog.CHALLENGES[0]["id"]):
+		items.append(["Challenges", "flame", func() -> void: open("challenges"), false])
+	if won1:
+		items.append(["New world", "globe", func() -> void: open("new_world"), false])
+	if _any_slot_saved():
+		items.append(["Load game", "folder-open", func() -> void: open("load"), false])
+	if won1 or pr0.achievements.size() > 0:
+		items.append(["Journal", "book-open", func() -> void: open("journal"), false])
 	var k := 0
 	var bh := 54.0 if sz.y >= 700 else 48.0
 	for it in items:
@@ -329,15 +383,15 @@ func _menu(sz: Vector2) -> Control:
 	var foot := UiKit.hbox(14)
 	var s1 := UiKit.hbox(4)
 	s1.add_child(UiKit.icon("star-fill", 18, UiKit.AMBER))
-	s1.add_child(UiKit.label("%d stars" % pr.total_stars(), 0, "Caption"))
+	s1.add_child(UiKit.label(I18n.f("%d stars", pr.total_stars()), 0, "Caption"))
 	foot.add_child(s1)
 	var s2 := UiKit.hbox(4)
 	s2.add_child(UiKit.icon("award", 18, UiKit.TEAL))
-	s2.add_child(UiKit.label("%d/%d achievements" % [pr.achievements.size(), Achievements.LIST.size()], 0, "Caption"))
+	s2.add_child(UiKit.label(I18n.f("%d/%d achievements", [pr.achievements.size(), Achievements.LIST.size()]), 0, "Caption"))
 	foot.add_child(s2)
 	var s3 := UiKit.hbox(4)
 	s3.add_child(UiKit.icon("sparkles", 18, pr.banner_color()))
-	s3.add_child(UiKit.label("Level %d%s" % [pr.level(), I18n.t("  ·  P%d") % pr.prestige if pr.prestige > 0 else ""], 0, "Caption"))
+	s3.add_child(UiKit.label(I18n.done(I18n.f("Level %d", pr.level()) + (I18n.t("  ·  P%d") % pr.prestige if pr.prestige > 0 else "")), 0, "Caption"))
 	foot.add_child(s3)
 	col.add_child(foot)
 	var card: PanelContainer = null
@@ -622,7 +676,7 @@ func _pause(sz: Vector2) -> Control:
 	var t := UiKit.vbox(0)
 	t.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	t.add_child(UiKit.label(sim.scenario.title() if sim.scenario != null else "Sandbox", 18, "Subheading"))
-	t.add_child(UiKit.label("Day %d · seed %d · %d villagers" % [sim.world.tick, sim.world.world_seed, sim.world.villagers], 0, "Caption"))
+	t.add_child(UiKit.label(I18n.f("Day %d · seed %d · %d villagers", [sim.world.tick, sim.world.world_seed, sim.world.villagers]), 0, "Caption"))
 	ic.add_child(t)
 	body.add_child(info)
 	var items := [
@@ -632,7 +686,6 @@ func _pause(sz: Vector2) -> Control:
 		["Restart island", "rotate-ccw", func() -> void: main.restart_scenario(), ""],
 		["Settings", "settings", func() -> void: open("settings"), ""],
 		["How to play", "circle-help", func() -> void: open("help"), ""],
-		["Show tips again", "compass", func() -> void: main.show_coach(), ""],
 		["Main menu", "log-out", func() -> void: main.open_menu(), "Ghost"],
 	]
 	for it in items:
@@ -668,7 +721,7 @@ func _slots(sz: Vector2, saving: bool) -> Control:
 		if empty:
 			c.add_child(UiKit.label("Empty", 0, "Caption"))
 		else:
-			c.add_child(UiKit.label("Day %d · %d villagers · health %d" % [int(info.get("day", 0)), int(info.get("villagers", 0)), int(info.get("keystone", 0))], 0, "Caption"))
+			c.add_child(UiKit.label(I18n.t("Day %d · %d villagers · health %d") % [int(info.get("day", 0)), int(info.get("villagers", 0)), int(info.get("keystone", 0))], 0, "Caption"))
 			c.add_child(UiKit.label(_when(float(info.get("saved_at", 0.0))), 0, "Caption"))
 		r.add_child(c)
 		var slot := int(p[2])
@@ -750,6 +803,14 @@ func _results(sz: Vector2) -> Control:
 		if sim.world.relaxed:
 			hv.add_child(UiKit.wrap_label("Relaxed mode: one star at most.", "Caption"))
 		body.add_child(how)
+	var blocker := str(_data.get("blocker", ""))
+	if not won and blocker != "":
+		var bb := UiKit.card("InsetWarm")
+		var bh := UiKit.hbox(10)
+		bb.add_child(bh)
+		bh.add_child(UiKit.icon("target", 22, UiKit.AMBER.darkened(0.3)))
+		bh.add_child(UiKit.wrap_label(blocker, "", minf(560.0, sz.x - 120.0)))
+		body.add_child(bb)
 	var chain: PackedStringArray = _data.get("chain", PackedStringArray())
 	if not won and chain.size() > 0:
 		var box := UiKit.card("InsetWarm")
@@ -913,14 +974,14 @@ func _mode_card(d: Dictionary, pr: Progress) -> Control:
 			var m := ContentDB.mutator(str(mid))
 			var r := UiKit.hbox(8)
 			r.add_child(UiKit.icon(str(m.get("icon", "sparkles")), 18, UiKit.AMBER_DARK))
-			var ml := UiKit.wrap_label("%s - %s" % [m.get("title", mid), m.get("blurb", "")], "Caption")
+			var ml := UiKit.wrap_label(I18n.done("%s - %s" % [I18n.t(str(m.get("title", mid))), I18n.t(str(m.get("blurb", "")))]), "Caption")
 			ml.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 			r.add_child(ml)
 			col.add_child(r)
 		col.add_child(UiKit.label(I18n.f("Score bonus ×%.2f", float(d.get("score_mult", 1.0))), 0, "Caption"))
 	elif d.has("census"):
 		var cz: Array = d["census"]
-		col.add_child(UiKit.wrap_label("Yearly census (every 120 days): at least %d villagers, +%d each year (up to %d)." % [int(cz[0]), int(cz[1]), int(cz[2])], "Caption"))
+		col.add_child(UiKit.wrap_label(I18n.t("Yearly census (every 120 days): at least %d villagers, +%d each year (up to %d).") % [int(cz[0]), int(cz[1]), int(cz[2])], "Caption"))
 	var medals: Array = d.get("medals", [])
 	var mr := UiKit.hbox(6)
 	for k in medals.size():
@@ -1162,8 +1223,15 @@ func _help(sz: Vector2) -> Control:
 	var btns := HFlowContainer.new()
 	btns.alignment = FlowContainer.ALIGNMENT_END
 	btns.add_theme_constant_override("h_separation", 8)
+	# replaying the tutorial replaces the island in play: the first tap only asks
 	var coach := UiKit.button("Replay the tutorial", Vector2(0, 54), "compass")
-	coach.pressed.connect(func() -> void: main.start_tutorial())
+	coach.pressed.connect(func() -> void:
+		if not main.has_game() or coach.has_meta("armed"):
+			main.start_tutorial()
+		else:
+			coach.set_meta("armed", true)
+			coach.text = "Tap again: your current island will be replaced"
+			Motion.pulse(coach, 1.06, 0.3))
 	btns.add_child(coach)
 	body.add_child(btns)
 	return _fit_sheet(parts, sz)
@@ -1184,7 +1252,7 @@ func _score_block(sc: Scenario, run: Dictionary) -> Control:
 		tw.tween_interval(0.3)
 		tw.tween_callback(func() -> void: AudioDirector.sfx("star", 0.9 + 0.12 * m))
 		tw.tween_property(ic, "scale", Vector2.ONE, 0.4).set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT)
-	var ml := UiKit.label(Scenario.MEDAL_NAMES[m].capitalize() + (" medal" if m > 0 else ""), 18, "Subheading")
+	var ml := UiKit.label(I18n.t(["No Medal", "Bronze medal", "Silver medal", "Gold medal"][m]), 18, "Subheading")
 	ml.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	box.add_child(ml)
 	var pts := UiKit.label(I18n.f("%d points", sc.final_score), 40, "Title")

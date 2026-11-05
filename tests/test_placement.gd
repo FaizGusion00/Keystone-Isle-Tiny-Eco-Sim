@@ -13,6 +13,7 @@ func _main() -> Node:
 	main.hud.clear_popups()
 	if main.hud.coach_active():
 		main.hud.end_coach()
+	open_main(main)
 	return main
 
 
@@ -70,8 +71,7 @@ func test_touch_previews_then_builds_and_tool_reverts() -> void:
 	var main := _main()
 	main.start_tutorial()
 	main.hud.clear_popups()
-	if main.hud.coach_active():
-		main.hud.end_coach()
+	open_main(main)
 	await main.get_tree().process_frame
 	await main.get_tree().process_frame
 	main.hud.select_tool(Hud.Tool.BUILD_FARM)
@@ -97,8 +97,7 @@ func test_mouse_builds_directly_and_hover_explains() -> void:
 	var main := _main()
 	main.start_tutorial()
 	main.hud.clear_popups()
-	if main.hud.coach_active():
-		main.hud.end_coach()
+	open_main(main)
 	await main.get_tree().process_frame
 	main.hud.select_tool(Hud.Tool.BUILD_FARM)
 	var t := _farm_tile(main)

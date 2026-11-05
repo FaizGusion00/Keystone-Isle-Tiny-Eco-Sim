@@ -181,7 +181,11 @@ func evaluate(ws: WorldState) -> void:
 	elif def.has("fail_keystone") and days_elapsed(ws) > 30 and ws.keystone < float(def["fail_keystone"]):
 		_end(ws, Status.FAILED, I18n.t("The island's health collapsed below %d.") % int(def["fail_keystone"]))
 	elif deadline() > 0 and days_elapsed(ws) >= deadline():
-		_end(ws, Status.FAILED, I18n.t("Day %d came before every goal was met.") % deadline())
+		var missed := PackedStringArray()
+		for k in objs.size():
+			if not objective_done(k, ws):
+				missed.append(I18n.done("%s (%s)" % [label(objs[k]), progress_text(objs[k], ws, self)]))
+		_end(ws, Status.FAILED, I18n.f("Day %d came and these goals were not met: %s.", [deadline(), ", ".join(missed)]))
 
 
 ## Endless: villagers required at the next year-end census.
@@ -232,7 +236,7 @@ func objective_text(ws: WorldState) -> String:
 	for k in objs.size():
 		if not objective_done(k, ws):
 			var o: Dictionary = objs[k]
-			var left := ("  ·  %d days left" % (deadline() - days_elapsed(ws))) if deadline() > 0 else ""
+			var left := I18n.f("  ·  %d days left", deadline() - days_elapsed(ws)) if deadline() > 0 else ""
 			return I18n.done("%s  (%s)%s" % [label(o), progress_text(o, ws, self), left])
 	return I18n.t("All goals met")
 

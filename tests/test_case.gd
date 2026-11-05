@@ -8,6 +8,17 @@ var current := ""
 var expects_errors := false
 
 
+## A main scene with the guided tutorial dismissed and every tool open (most UI tests want the
+## full HUD on the tutorial island; tests of the guide itself start it explicitly).
+static func open_main(main: Node) -> void:
+	if main.guide.active():
+		main.guide.i = -1
+		main.hud.hide_guide()
+		main.hud.end_coach()
+	main.hud.set_available([], [], [], true)
+	main.clock.teaching = false
+
+
 func assert_true(cond: bool, msg: String = "") -> void:
 	if not cond:
 		failures.append("%s: expected true. %s" % [current, msg])

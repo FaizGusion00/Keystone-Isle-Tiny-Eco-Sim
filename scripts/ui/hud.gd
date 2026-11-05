@@ -6,6 +6,7 @@ extends CanvasLayer
 ##   costs · overlay legend · history drawer with why-chains · toast stack · modal popup ·
 ##   coach-mark tutorial. Re-lays itself out for landscape/portrait, safe areas and UI scale.
 
+signal chip_explained(key: String)
 signal new_island_requested
 signal tutorial_requested
 signal speed_requested(speed: int)
@@ -16,6 +17,7 @@ signal why_requested(event_id: int)
 signal menu_requested
 signal tile_closed
 signal coach_finished
+signal zoom_requested(factor: float)
 
 enum Tool { INSPECT, CLEAR_TREES, PLANT_TREES, BUILD_FARM, BUILD_HOUSE, BUILD_DAM, RESTORE_LAND, DEMOLISH }
 const TOOL_LABELS := ["Inspect", "Clear", "Plant", "Farm", "House", "Dam", "Restore", "Remove"]
@@ -89,6 +91,7 @@ var _obj_card: PanelContainer
 var _obj_title: Label
 var _obj_rows: VBoxContainer
 var _obj_footer: Label
+var _obj_extra: VBoxContainer
 var _obj_collapsed := false
 var _obj_chev: Button
 var _obj_summary: Label        ## "1/2 · 198 d" – what the collapsed pill shows
@@ -117,10 +120,14 @@ var inspector_column: VBoxContainer
 # toolbar
 var _toolbar: PanelContainer
 var _side: PanelContainer
+var _zoom_card: PanelContainer
 var _tool_sep: ColorRect
 var _tool_scroll: ScrollContainer
 var _tool_buttons: Array[Button] = []
-var _tool_cost: Array[Label] = []
+var _tool_cost: Array[Label] = []      ## labor number under each tool
+var _tool_wood: Array[Label] = []      ## wood number (hidden when the tool needs none)
+var _tool_cost_icons: Array = []       ## [labor icon, wood icon] per tool
+var _tool_cost_plain: PackedStringArray = []  ## "3 labor · 2 wood" (tooltip / tests / screen readers)
 var _tool_icon: Array[TextureRect] = []
 var _tool_name: Array[Label] = []
 var tool_bar_row: HBoxContainer
@@ -207,14 +214,18 @@ func _ready() -> void:
 	_build_objectives()
 	_build_inspector()
 	_build_tool_bar()
+	_build_zoom()
 	_build_legend()
 	_build_events_panel()
 	_build_toasts()
 	_build_award()
 	_build_place_tag()
+	_build_tool_hint()
+	_rule_card = RuleCard.new()
+	root.add_child(_rule_card)
 	_build_popup()
 	_build_coach()
-	for owned in [_inspector, _legend, events_panel, popup, _coach_card, _side]:
+	for owned in [_inspector, _legend, events_panel, popup, _coach_card, _side, _zoom_card]:
 		if owned != null:
 			owned.set_meta("layout_owned", true)
 	get_viewport().size_changed.connect(relayout)
@@ -256,7 +267,10 @@ func _layout(sz: Vector2) -> void:
 			else:
 				tool_bar_row.add_child(btn)
 	_tool_sep.visible = not want_side
-	_side.visible = want_side and not events_panel.visible
+	_tool_sep.visible = not want_side
+	overlay_button.visible = extra_available("layers")
+	events_button.visible = extra_available("history")
+	_side.visible = want_side and not events_panel.visible and (overlay_button.visible or events_button.visible)
 	_fit_tools(w - 20.0)
 	_tool_scroll.custom_minimum_size = Vector2(0, 0)
 	var tb_min := tool_bar_row.get_combined_minimum_size()
@@ -265,6 +279,15 @@ func _layout(sz: Vector2) -> void:
 	_toolbar.reset_size()
 	_toolbar.position = Vector2(l + (w - _toolbar.size.x) * 0.5, b - _toolbar.size.y)
 	var bottom_y := _toolbar.position.y - 10.0
+	# --- the selected tool's one-line rule, just above the toolbar
+	if _tool_hint.visible:
+		_tool_hint_label.custom_minimum_size.x = 0.0
+		var hw0 := minf(_tool_hint_label.get_theme_font("font").get_string_size(_tool_hint_label.text,
+			HORIZONTAL_ALIGNMENT_LEFT, -1, 15).x + 6.0, minf(620.0, w - 70.0))
+		_tool_hint_label.custom_minimum_size.x = hw0
+		_tool_hint.reset_size()
+		_tool_hint.position = Vector2(l + (w - _tool_hint.size.x) * 0.5, bottom_y - _tool_hint.size.y + 2.0)
+		bottom_y = _tool_hint.position.y - 8.0
 	# --- top row: day chip | chips | speed
 	_day_card.reset_size()
 	_speed_card.reset_size()
@@ -319,6 +342,20 @@ func _layout(sz: Vector2) -> void:
 		_side.reset_size()
 		var side_bottom := _inspector.position.y - 8.0 if _inspector.visible else bottom_y
 		_side.position = Vector2(r - _side.size.x, side_bottom - _side.size.y)
+	# --- zoom (+/−): bottom-right, left of the portrait side stack and clear of the inspector
+	_zoom_card.visible = not events_panel.visible and not popup.visible
+	if _zoom_card.visible:
+		_zoom_card.reset_size()
+		var zx := r - _zoom_card.size.x
+		var zy := bottom_y - _zoom_card.size.y
+		if portrait and _side.visible:
+			zx = _side.position.x - 8.0 - _zoom_card.size.x
+			zy = _side.position.y + _side.size.y - _zoom_card.size.y
+		elif not portrait and _inspector.visible:
+			var zz := Rect2(Vector2(zx, zy), _zoom_card.size)
+			if Rect2(_inspector.position, _inspector.size).intersects(zz):
+				zx = _inspector.position.x - 8.0 - _zoom_card.size.x
+		_zoom_card.position = Vector2(maxf(l, zx), maxf(top_bottom, zy))
 	# --- legend (bottom-left above the toolbar)
 	_legend.reset_size()
 	if portrait and _inspector.visible:
@@ -415,19 +452,95 @@ func _chip_explains(p: Control, icon_name: String) -> void:
 
 
 func explain_chip(p: Control, icon_name: String) -> void:
-	# replace an earlier explanation instead of piling them up
-	for c in _toasts.get_children():
-		if c.has_meta("chip_tip"):
-			c.queue_free()
-			_toasts.remove_child(c)
-	toast(p.tooltip_text, 3.5, icon_name)
-	if _toasts.get_child_count() > 0:
-		_toasts.get_child(_toasts.get_child_count() - 1).set_meta("chip_tip", true)
-	if not UiKit.reduce_motion:
-		p.pivot_offset = p.size * 0.5
-		var tw := p.create_tween()
-		tw.tween_property(p, "scale", Vector2(1.06, 1.06), 0.08)
-		tw.tween_property(p, "scale", Vector2.ONE, 0.16).set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT)
+	var key := ""
+	for k in _chips:
+		if _chips[k]["panel"] == p:
+			key = k
+	Motion.pulse(p, 1.06, 0.24)
+	if _rule_card.visible and _rule_card.key == key:
+		_rule_card.close()  # tapping the same chip again closes its card
+		return
+	var info := chip_rules(key)
+	if info.is_empty():
+		toast(p.tooltip_text, 3.5, icon_name)
+		return
+	var r := p.get_global_rect()
+	var s := root.get_global_transform_with_canvas().get_scale()
+	var at := Rect2((r.position - root.global_position) / s, r.size / s)
+	_rule_card.open(key, icon_name, info["title"], info["rows"], info.get("foot", ""), at, minf(360.0, root.size.x - 24.0))
+	chip_explained.emit(key)
+
+
+func rule_card_text() -> String:
+	return _rule_card.text() if _rule_card.visible and _rule_card.key != "" else ""
+
+
+func close_rule_card() -> void:
+	_rule_card.close()
+
+
+## Plain-words explanation of one top-bar number, from the same values the simulation uses.
+func chip_rules(key: String) -> Dictionary:
+	if _sim == null:
+		return {}
+	var ws := _sim.world
+	var pct := func(v: float) -> int: return roundi(v * 100.0)
+	match key:
+		"villagers":
+			var g := _sim.growth_status()
+			var rows := [
+				[1 if g["fed_ok"] else 0, I18n.f("Everyone fed: %d%% (needs over 95%%)", pct.call(g["fed"]))],
+				[1 if g["water_ok"] else 0, I18n.f("Enough water: %d%% (needs over 95%%)", pct.call(g["water"]))],
+				[1 if g["store_ok"] else 0, I18n.f("Food stored: %d of %d (3 per person)", [roundi(g["store"]), roundi(g["store_need"])])],
+				[1 if g["room_ok"] else 0, I18n.f("Free homes: %d people, room for %d", [g["villagers"], g["homes"]])],
+			]
+			var foot := I18n.f("All four met: the village grows at the next check in %d days.", g["next_in"]) if g["ready"] \
+				else I18n.f("Next check in %d days. If fed or water drops below 60%%, someone leaves.", g["next_in"])
+			return {"title": I18n.t("Village growth"), "rows": rows, "foot": foot}
+		"food":
+			var f := _sim.food_status()
+			return {"title": I18n.f("Food: %d stored", roundi(ws.food_store)), "rows": [
+				[-1, I18n.f("The village eats %.1f a day (enough for about %d days)", [f["eat"], roundi(f["days"])])],
+				[-1, I18n.f("Fishing brings %.1f a day, hunting %.1f", [f["fish"], f["goats"]])],
+				[1 if f["farms"] > 0 else 0, I18n.f("Farms: %d (each harvest gives up to 8, every ~30 days)", f["farms"])],
+				[1 if ws.food_ema > 0.95 else 0, I18n.f("Everyone fed: %d%%", pct.call(ws.food_ema))],
+			], "foot": I18n.t("Build farms on moist ground near the village to grow the store.")}
+		"water":
+			return {"title": I18n.f("Water: %d%% of the need", pct.call(ws.water_ema)), "rows": [
+				[-1, I18n.t("Comes from streams, ponds and wet ground within 3 tiles of the village")],
+				[-1, I18n.t("Dry seasons lower it; a dam nearby stores water")],
+			], "foot": I18n.t("Below 70% is a shortage; below 60% people leave.")}
+		"fish":
+			return {"title": I18n.f("Fish: %d", roundi(ws.fish)), "rows": [
+				[-1, I18n.f("The sea has room for about %d fish right now", roundi(_sim.fish_capacity))],
+				[1 if ws.k_water > 0.7 else 0, I18n.f("Coastal water clarity: %d%%", pct.call(ws.k_water))],
+				[-1, I18n.t("Mud from bare land and dams on rivers shrink that room")],
+			], "foot": I18n.t("The village catches some fish every day.")}
+		"goats":
+			return {"title": I18n.f("Wild goats: %d", roundi(ws.goats)), "rows": [
+				[-1, I18n.t("They graze open grass and forest edges")],
+				[-1, I18n.t("Farms and houses take their pasture; the village hunts a few")],
+			], "foot": ""}
+		"labor":
+			return {"title": I18n.f("Labor: %d of %d", [floori(ws.labor), roundi(_sim.labor_cap())]), "rows": [
+				[-1, I18n.t("Every tool costs labor (shown under each tool)")],
+				[-1, I18n.f("It comes back by itself: +%.1f a day (more people, more labor)", ws.villagers * Simulation.LABOR_PER_VILLAGER)],
+			], "foot": ""}
+		"wood":
+			return {"title": I18n.f("Wood: %d", floori(ws.wood)), "rows": [
+				[-1, I18n.f("Cut down a grown forest tile: +%d wood", int(Simulation.WOOD_PER_FOREST))],
+				[-1, I18n.t("Farm 2 · House 6 · Dam 10")],
+			], "foot": I18n.t("Bare slopes wash away in heavy rain - keep some forest.")}
+		"keystone":
+			return {"title": I18n.f("Island health: %d", roundi(ws.keystone)), "rows": [
+				[1 if ws.k_plants > 0.7 else 0, I18n.f("Plants: %d%%", pct.call(ws.k_plants))],
+				[1 if ws.k_soil > 0.7 else 0, I18n.f("Soil: %d%%", pct.call(ws.k_soil))],
+				[1 if ws.k_water > 0.7 else 0, I18n.f("Clear coastal water: %d%%", pct.call(ws.k_water))],
+				[1 if ws.k_fish > 0.5 else 0, I18n.f("Fish: %d%%", pct.call(ws.k_fish))],
+				[1 if ws.k_wildlife > 0.5 else 0, I18n.f("Wild goats: %d%%", pct.call(ws.k_wildlife))],
+				[1 if ws.k_village > 0.9 else 0, I18n.f("Village fed and watered: %d%%", pct.call(ws.k_village))],
+			], "foot": I18n.t("Everything on the island counts. Cutting forest lowers plants and soil.")}
+	return {}
 
 
 # ================================================================== top bar
@@ -441,7 +554,7 @@ func _build_day() -> void:
 	row.add_child(_season_icon)
 	var col := UiKit.vbox(0)
 	row.add_child(col)
-	_day_label = UiKit.label("Day 0", 0, "Subheading")
+	_day_label = UiKit.label("", 0, "Subheading")
 	col.add_child(_day_label)
 	_season_label = UiKit.label("Spring", 0, "Caption")
 	_season_label.add_theme_font_size_override("font_size", 13)
@@ -461,8 +574,8 @@ func _build_chips() -> void:
 	_flow_chip("water", "droplet", "Water", "Fresh water: share of the village's need met")
 	_flow_chip("fish", "fish", "Fish", "Fish in coastal waters (need clear water)")
 	_flow_chip("goats", "rabbit", "Goats", "Wild goats (need grass and forest)")
-	_flow_chip("labor", "hammer", "Labor", "Labor: spent by tools, regrows each day")
-	_flow_chip("wood", "axe", "Wood", "Wood: from clearing forest, spent on buildings")
+	_flow_chip("labor", "hand", "Labor", "Labor: spent by tools, regrows each day")
+	_flow_chip("wood", "tree-pine", "Wood", "Wood: from clearing forest, spent on buildings")
 	# island health meter
 	var p := UiKit.card("Chip")
 	p.tooltip_text = "Island health: plants, soil, water, fish, wildlife and village together"
@@ -527,7 +640,7 @@ func set_speed(s: int) -> void:
 func retranslate() -> void:
 	if _sim != null:
 		_update_costs(_sim.world)
-	if coach_active():
+	if coach_active() and _coach_i >= 0:
 		_coach_go(_coach_i)
 	if events_panel != null and events_panel.visible and _sim != null:
 		show_events(_sim.events, _selected_event)
@@ -713,11 +826,68 @@ func _build_objectives() -> void:
 			_obj_chev.pressed.emit())  # the whole pill opens the goals, not only the chevron
 	_obj_rows = UiKit.vbox(6)
 	col.add_child(_obj_rows)
+	# extra stars and the losing rule, so nothing about the island's result is a surprise
+	_obj_extra = UiKit.vbox(3)
+	col.add_child(_obj_extra)
 	_obj_footer = UiKit.label("", 0, "Caption")
 	col.add_child(_obj_footer)
 	objective_label = UiKit.label("")
 	objective_label.visible = false
 	root.add_child(objective_label)
+
+
+## Star goals (with live ticks) and the losing rule, under the main goals.
+func _update_goal_extras(sim: Simulation, sc: Scenario) -> void:
+	var stars: Array = [] if sc.is_sandbox() or sc.is_scored() else sc.def.get("stars", [])
+	var lose := PackedStringArray()
+	if not sc.is_sandbox() and not sim.world.relaxed:
+		if int(sc.def.get("fail_villagers", 0)) > 0:
+			lose.append(I18n.f("You lose if only %d villagers remain.", int(sc.def["fail_villagers"])))
+		if sc.def.has("fail_keystone"):
+			lose.append(I18n.f("You lose if island health falls below %d.", int(sc.def["fail_keystone"])))
+	var want := stars.size() + (1 if stars.size() > 0 else 0) + lose.size()
+	if _obj_extra.get_child_count() != want:
+		for c in _obj_extra.get_children():
+			_obj_extra.remove_child(c)
+			c.queue_free()
+		if stars.size() > 0:
+			_obj_extra.add_child(UiKit.label("Extra stars", 13, "Caption"))
+		for k in stars.size():
+			var row := UiKit.hbox(8)
+			row.add_child(UiKit.icon("star", 16, UiKit.AMBER))
+			var l := UiKit.label("", 14)
+			l.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+			row.add_child(l)
+			_obj_extra.add_child(row)
+		for k in lose.size():
+			var row := UiKit.hbox(8)
+			row.add_child(UiKit.icon("triangle-alert", 16, UiKit.CORAL))
+			var l := UiKit.label("", 13, "Caption")
+			l.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+			l.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+			row.add_child(l)
+			_obj_extra.add_child(row)
+	var off := 1 if stars.size() > 0 else 0
+	for k in stars.size():
+		var row := _obj_extra.get_child(off + k) as HBoxContainer
+		var met := Scenario.met(stars[k], sim.world, sc)
+		var ic := row.get_child(0) as TextureRect
+		ic.texture = UiKit.icon_tex("star-fill" if met else "star")
+		(row.get_child(1) as Label).text = Scenario.label(stars[k])
+	for k in lose.size():
+		var row := _obj_extra.get_child(off + stars.size() + k) as HBoxContainer
+		(row.get_child(1) as Label).text = lose[k]
+	_obj_extra.visible = not _obj_collapsed and want > 0
+
+
+func goals_text() -> String:
+	var parts := PackedStringArray()
+	for row in _obj_rows.get_children():
+		parts.append((row.get_child(1) as Label).text)
+	for row in _obj_extra.get_children():
+		parts.append((row as Label).text if row is Label else (row.get_child(1) as Label).text)
+	parts.append(_obj_footer.text)
+	return "\n".join(parts)
 
 
 ## Fold the goals card to a compact pill (title + "done/total · days") or open it again.
@@ -726,6 +896,7 @@ func set_goals_collapsed(on: bool) -> void:
 		return
 	_obj_collapsed = on
 	_obj_rows.visible = not on
+	_obj_extra.visible = not on and _obj_extra.get_child_count() > 0
 	_obj_footer.visible = not on and _obj_footer.text != ""
 	_obj_summary.visible = on and _obj_summary.text != ""
 	_obj_chev.icon = UiKit.icon_tex("chevron-right" if on else "chevron-down")
@@ -771,6 +942,8 @@ func _arm_goal_collapse(mult: float = 1.0) -> void:
 
 ## The player started playing (tapped the map): the goals have been read, tuck them away.
 func world_touched() -> void:
+	if _rule_card != null:
+		_rule_card.close()
 	if not _obj_collapsed and _obj_card.visible and not coach_active():
 		_obj_arm_token += 1
 		set_goals_collapsed(true)
@@ -793,7 +966,7 @@ func update_objectives(sim: Simulation) -> void:
 	_obj_card.visible = not events_panel.visible  # the history drawer covers the same corner
 	_obj_title.text = sc.title()
 	if sc.is_sandbox():
-		objs = []
+		objs = sc.def.get("ideas", ScenarioCatalog.SANDBOX.get("ideas", []))
 	if _obj_rows.get_child_count() != objs.size():
 		for c in _obj_rows.get_children():
 			c.queue_free()
@@ -812,28 +985,31 @@ func update_objectives(sim: Simulation) -> void:
 	for k in objs.size():
 		var o: Dictionary = objs[k]
 		var row := _obj_rows.get_child(k) as HBoxContainer
-		var ok := sc.objective_done(k, sim.world)
+		var ok := Scenario.met(o, sim.world, sc) if sc.is_sandbox() else sc.objective_done(k, sim.world)
 		var ic := row.get_child(0) as TextureRect
 		ic.texture = UiKit.icon_tex("circle-check" if ok else "circle")
 		ic.self_modulate = UiKit.LEAF if ok else UiKit.INK_FAINT
 		(row.get_child(1) as Label).text = Scenario.label(o)
 		(row.get_child(1) as Label).modulate = Color(1, 1, 1, 0.55) if ok else Color.WHITE
 		(row.get_child(2) as Label).text = Scenario.progress_text(o, sim.world, sc)
+	_update_goal_extras(sim, sc)
 	var foot := ""
 	if sc.is_sandbox():
-		foot = "Free play · no goals or deadline"
+		foot = "Free play · ideas to try, no deadline"
 	elif sc.status == Scenario.Status.WON:
 		foot = I18n.t("Complete · %d of 3 stars") % sc.stars
 	elif sc.status == Scenario.Status.FAILED:
 		foot = I18n.f("Failed · %s", I18n.t(sc.reason))
 	elif sc.deadline() > 0:
-		foot = I18n.t("%d days left") % maxi(0, sc.deadline() - sc.days_elapsed(sim.world))
+		var left := maxi(0, sc.deadline() - sc.days_elapsed(sim.world))
+		var mins := ceili(left / SimClock.TICKS_PER_SECOND[SimClock.Speed.NORMAL] / 60.0)
+		foot = I18n.f("%d days left · about %d min at normal speed", [left, mins]) if left > 60 else I18n.f("%d days left", left)
 	_obj_footer.text = foot
 	_obj_footer.visible = foot != "" and not _obj_collapsed
 	# compact pill summary + auto-collapse bookkeeping
 	var done := 0
 	for k in objs.size():
-		if sc.objective_done(k, sim.world):
+		if (Scenario.met(objs[k], sim.world, sc) if sc.is_sandbox() else sc.objective_done(k, sim.world)):
 			done += 1
 	var summ := ""
 	if sc.is_sandbox():
@@ -1150,11 +1326,41 @@ func _build_tool_bar() -> void:
 	_style_tools()
 
 
+const ZOOM_STEP := 1.15
+
+
+## +/− beside the map. Wheel, pinch and the keyboard still zoom; a phone or emulator often has neither.
+func _build_zoom() -> void:
+	_zoom_card = UiKit.card()
+	root.add_child(_zoom_card)
+	var sb := (_zoom_card.get_theme_stylebox("panel", "Card") as StyleBoxFlat).duplicate() as StyleBoxFlat
+	sb.set_content_margin_all(6)
+	_zoom_card.add_theme_stylebox_override("panel", sb)
+	var col := UiKit.vbox(4)
+	_zoom_card.add_child(col)
+	var zin := UiKit.icon_button("plus", "Zoom in")
+	zin.pressed.connect(func() -> void: zoom_requested.emit(ZOOM_STEP))
+	col.add_child(zin)
+	var zout := UiKit.icon_button("minus", "Zoom out")
+	zout.pressed.connect(func() -> void: zoom_requested.emit(1.0 / ZOOM_STEP))
+	col.add_child(zout)
+
+
 ## Fits the toolbar to `avail` px without scrolling: buttons narrow down to a compact width,
 ## and if even that does not fit, the tools split into pages behind a "More" button.
 func _fit_tools(avail: float) -> void:
-	var extra: Array = [] if overlay_button.get_parent() != tool_bar_row else [overlay_button, events_button]
-	var n := _tool_buttons.size() + extra.size()
+	var extra: Array = []
+	if overlay_button.get_parent() == tool_bar_row:
+		for btn in [overlay_button, events_button]:
+			if btn.visible:
+				extra.append(btn)
+	var shown: Array[Button] = []
+	for k in _tool_buttons.size():
+		if tool_available(k):
+			shown.append(_tool_buttons[k])
+		else:
+			_tool_buttons[k].visible = false
+	var n := shown.size() + extra.size()
 	var gap := 4.0
 	var sep_w := 9.0 if not extra.is_empty() else 0.0
 	var bw := clampf((avail - sep_w - gap * (n - 1)) / n, TOOL_MIN_W, TOOL_W)
@@ -1164,20 +1370,91 @@ func _fit_tools(avail: float) -> void:
 		bw = TOOL_MIN_W
 		var per := maxi(2, floori((avail - sep_w - (bw + gap) * (extra.size() + 1)) / (bw + gap)))
 		_tool_per = per
-		_tool_pages = ceili(float(_tool_buttons.size()) / per)
+		_tool_pages = ceili(float(shown.size()) / per)
 		_tool_page = mini(_tool_page, _tool_pages - 1)
-		for k in _tool_buttons.size():
-			_tool_buttons[k].visible = k / per == _tool_page
+		for k in shown.size():
+			shown[k].visible = k / per == _tool_page
 	else:
 		_tool_page = 0
-		for b in _tool_buttons:
+		for b in shown:
 			b.visible = true
 	_tool_more.visible = _tool_pages > 1
 	(_tool_more.get_child(0).get_child(1) as Label).text = "More" if _tool_page < _tool_pages - 1 else "Back"
-	for b in _tool_buttons + extra + [_tool_more]:
+	_tool_sep.visible = _tool_sep.visible and not extra.is_empty()
+	for b in shown + extra + [_tool_more]:
 		(b as Button).custom_minimum_size.x = bw
 		var name := (b as Button).get_child(0).get_child(1) as Label
 		name.add_theme_font_size_override("font_size", 14 if bw >= 68.0 else 12)
+
+
+# ---------------------------------------------------------------- progressive unlock
+
+const ALL_CHIPS := ["villagers", "food", "water", "fish", "goats", "labor", "wood", "keystone"]
+const ALL_EXTRAS := ["speed_play", "speed_fast", "layers", "history"]
+var _avail_tools: Array = []   ## empty = everything
+var _avail_chips: Array = []
+var _avail_extras: Array = []
+var _avail_all := true
+
+signal unlocked(kind: String, what: String)
+
+
+## Show only some tools / top-bar numbers / extras (speed, layers, history). Pass all = true for
+## everything. With `announce`, anything that just appeared pops in and gets a "New: …" banner.
+func set_available(tools: Array, chips: Array, extras: Array, all := false, announce := false) -> void:
+	var before_t := []
+	var before_c := []
+	var before_e := []
+	for k in _tool_buttons.size():
+		if tool_available(k):
+			before_t.append(k)
+	for c in ALL_CHIPS:
+		if chip_available(c):
+			before_c.append(c)
+	for e in ALL_EXTRAS:
+		if extra_available(e):
+			before_e.append(e)
+	_avail_all = all
+	_avail_tools = tools.duplicate()
+	if not _avail_tools.has(Tool.INSPECT):
+		_avail_tools.append(Tool.INSPECT)
+	_avail_chips = chips.duplicate()
+	_avail_extras = extras.duplicate()
+	if not tool_available(tool):
+		select_tool(Tool.INSPECT)
+	for c in ALL_CHIPS:
+		var p := _chips[c]["panel"] as Control
+		p.visible = chip_available(c)
+		if announce and p.visible and not before_c.has(c):
+			Motion.appear(p, Vector2(0, -10), Motion.SLOW)
+			Motion.pulse(p, 1.15, 0.4)
+	for k in _speed_buttons.size():
+		_speed_buttons[k].visible = (extra_available("speed_play") if k <= 1 else extra_available("speed_fast"))
+	_speed_card.get_child(0).get_child(0).visible = extra_available("speed_play")
+	relayout()
+	if announce:
+		for k in _tool_buttons.size():
+			if tool_available(k) and not before_t.has(k):
+				Motion.pulse(_tool_buttons[k], 1.18, 0.45)
+				award(TOOL_LABELS[k], "New tool", TOOL_ICONS[k])
+				unlocked.emit("tool", TOOL_LABELS[k])
+		for e in ALL_EXTRAS:
+			if extra_available(e) and not before_e.has(e):
+				var b: Control = {"layers": overlay_button, "history": events_button}.get(e, _speed_card)
+				Motion.pulse(b, 1.15, 0.45)
+				unlocked.emit("extra", e)
+
+
+func tool_available(t: int) -> bool:
+	return _avail_all or _avail_tools.has(t)
+
+
+func chip_available(c: String) -> bool:
+	return _avail_all or _avail_chips.has(c)
+
+
+func extra_available(e: String) -> bool:
+	return _avail_all or _avail_extras.has(e)
 
 
 func tools_fit_without_scroll() -> bool:
@@ -1197,15 +1474,29 @@ func _tool_button(text: String, icon_name: String, t: int) -> Button:
 	name.add_theme_font_override("font", UiKit.font(false, 600))
 	name.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	col.add_child(name)
+	# cost badge: [hammer] 3  [axe] 2 - the same icons as the Labor and Wood chips up top
+	var crow := UiKit.hbox(2)
+	crow.alignment = BoxContainer.ALIGNMENT_CENTER
+	crow.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	crow.visible = t > 0
+	var li := UiKit.icon("hand", 13, UiKit.INK_SOFT)
 	var cost := UiKit.label("", 0, "Badge")
-	cost.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	cost.add_theme_font_size_override("font_size", 12)
-	cost.visible = t > 0
-	col.add_child(cost)
+	var wi := UiKit.icon("tree-pine", 13, UiKit.INK_SOFT)
+	var wood := UiKit.label("", 0, "Badge")
+	wood.add_theme_font_size_override("font_size", 12)
+	for n in [li, cost, wi, wood]:
+		(n as Control).mouse_filter = Control.MOUSE_FILTER_IGNORE
+		crow.add_child(n)
+	wi.custom_minimum_size.x = 14
+	col.add_child(crow)
 	if t >= 0:
 		_tool_icon.append(ic)
 		_tool_name.append(name)
 		_tool_cost.append(cost)
+		_tool_wood.append(wood)
+		_tool_cost_icons.append([li, wi])
+		_tool_cost_plain.append("")
 	return b
 
 
@@ -1223,6 +1514,7 @@ func select_tool(t: int) -> void:
 		if not was:
 			Motion.pulse(_tool_icon[t], 1.22, 0.3)
 	_style_tools()
+	_update_tool_hint()
 	tool_selected.emit(t)
 
 
@@ -1231,11 +1523,21 @@ func _style_tools() -> void:
 		var on := _tool_buttons[t].button_pressed
 		_tool_icon[t].self_modulate = Color.WHITE if on else UiKit.INK
 		_tool_name[t].add_theme_color_override("font_color", Color.WHITE if on else UiKit.INK)
-		_tool_cost[t].add_theme_color_override("font_color", Color(1, 1, 1, 0.85) if on else
-			(UiKit.CORAL if _tool_cost[t].has_meta("short") and bool(_tool_cost[t].get_meta("short")) else UiKit.INK_SOFT))
+		var soft := Color(1, 1, 1, 0.85) if on else UiKit.INK_SOFT
+		var lshort := bool(_tool_cost[t].get_meta("short", false))
+		var wshort := bool(_tool_wood[t].get_meta("short", false))
+		_tool_cost[t].add_theme_color_override("font_color", soft if on or not lshort else UiKit.CORAL)
+		_tool_wood[t].add_theme_color_override("font_color", soft if on or not wshort else UiKit.CORAL)
+		(_tool_cost_icons[t][0] as TextureRect).self_modulate = soft if on or not lshort else UiKit.CORAL
+		(_tool_cost_icons[t][1] as TextureRect).self_modulate = soft if on or not wshort else UiKit.CORAL
 
 
-## Cost badges ("3⚒ 2🪵" as "3 lab · 2 wood") and the unaffordable state.
+## "3 labor · 2 wood" for a tool (what its icon badge shows, in words).
+func tool_cost_text(t: int) -> String:
+	return _tool_cost_plain[t] if t < _tool_cost_plain.size() else ""
+
+
+## Cost badges ([hammer] 3 [axe] 2; the short part turns coral) and the unaffordable state.
 func _update_costs(ws: WorldState) -> void:
 	for t in range(1, _tool_buttons.size()):
 		var c := Vector2.ZERO
@@ -1244,10 +1546,19 @@ func _update_costs(ws: WorldState) -> void:
 		else:
 			var raw: Array = Simulation.ACTION_COST.get(TOOL_ACTIONS[t], [0.0, 0.0])
 			c = Vector2(raw[0], raw[1]) * (0.5 if ws.relaxed else 1.0) * (0.0 if ws.free_build else 1.0)
-		var txt := I18n.t("free") if c == Vector2.ZERO else (I18n.f("%s labor", _num(c.x)) if c.y <= 0.0 else I18n.f("%s · %s wood", [_num(c.x), _num(c.y)]))
-		var short := ws.labor + 1e-6 < c.x or ws.wood + 1e-6 < c.y
-		_tool_cost[t].text = txt
-		_tool_cost[t].set_meta("short", short)
+		var lshort := ws.labor + 1e-6 < c.x
+		var wshort := ws.wood + 1e-6 < c.y
+		var short := lshort or wshort
+		var free := c == Vector2.ZERO
+		_tool_cost[t].text = I18n.t("free") if free else _num(c.x)
+		_tool_cost[t].set_meta("short", lshort)
+		_tool_wood[t].text = _num(c.y)
+		_tool_wood[t].set_meta("short", wshort)
+		_tool_wood[t].visible = c.y > 0.0
+		(_tool_cost_icons[t][0] as Control).visible = not free
+		(_tool_cost_icons[t][1] as Control).visible = c.y > 0.0
+		_tool_cost_plain[t] = cost_text(c)
+		_tool_buttons[t].tooltip_text = I18n.done(I18n.t(TOOL_TIPS[t]) + "\n" + cost_text(c))
 		var want := Color(1, 1, 1, 0.6) if short else Color.WHITE
 		if _tool_buttons[t].self_modulate != want:
 			Motion.color_to(_tool_buttons[t], "self_modulate", want, Motion.BASE)
@@ -1696,7 +2007,8 @@ func _next_award() -> void:
 	_award_busy = true
 	var a: PackedStringArray = _award_queue.pop_front()
 	_award_title.text = a[0]
-	_award_sub.text = a[1].to_upper()
+	_award_sub.text = I18n.done(I18n.t(a[1]).to_upper())
+	_award_title.text = I18n.t(a[0])
 	for c in _award_icon.get_children():
 		_award_icon.remove_child(c)
 		c.queue_free()
@@ -1741,8 +2053,59 @@ func notification_rects() -> Array[Rect2]:
 	return out
 
 
+# ================================================================== tool hint
+
+## What each tool does and where it works, in one line (always visible while picked: touch
+## screens have no hover tooltips).
+const TOOL_HINTS := [
+	"",
+	"Cut grown forest for wood (+4 each). Bare slopes wash away in heavy rain.",
+	"Plant trees on open land. Forest holds soil and water and keeps streams clear.",
+	"On lowland or grassland within 5 tiles of the village. A harvest every ~30 days.",
+	"Next to the village or another house. Each house has room for 4 more people.",
+	"On a stream, where water gathers. Stores water for nearby farms - river dams block fish.",
+	"Heal bare, damaged or burnt land: more soil and plants.",
+	"Take a building down and get half its wood back.",
+]
+
+
+func _build_tool_hint() -> void:
+	_tool_hint = UiKit.card("Chip")
+	_tool_hint.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_tool_hint.visible = false
+	var row := UiKit.hbox(8)
+	_tool_hint.add_child(row)
+	_tool_hint_icon = UiKit.icon("info", 18, UiKit.TEAL_DARK)
+	row.add_child(_tool_hint_icon)
+	_tool_hint_label = UiKit.label("", 15)
+	_tool_hint_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	row.add_child(_tool_hint_label)
+	root.add_child(_tool_hint)
+
+
+func _update_tool_hint() -> void:
+	var on := tool > 0 and tool < TOOL_HINTS.size()
+	var was := _tool_hint.visible
+	if on:
+		_tool_hint_label.text = TOOL_HINTS[tool]
+		_tool_hint_icon.texture = UiKit.icon_tex(TOOL_ICONS[tool])
+	_tool_hint.visible = on
+	if on != was or on:
+		relayout()
+	if on and not was:
+		Motion.appear(_tool_hint, Vector2(0, 8), Motion.FAST)
+
+
+func tool_hint_text() -> String:
+	return _tool_hint_label.text if _tool_hint.visible else ""
+
+
 # ================================================================== placement tag
 
+var _rule_card: RuleCard
+var _tool_hint: PanelContainer
+var _tool_hint_label: Label
+var _tool_hint_icon: TextureRect
 var _place_tag: PanelContainer
 var _place_label: Label
 var _place_icon: TextureRect
@@ -1955,13 +2318,26 @@ func _build_coach() -> void:
 	_coach_text = UiKit.wrap_label("", "", 300)
 	_coach_text.add_theme_font_size_override("font_size", 17)
 	col.add_child(_coach_text)
+	_coach_hint = UiKit.wrap_label("", "", 300)
+	_coach_hint.add_theme_font_size_override("font_size", 15)
+	_coach_hint.add_theme_color_override("font_color", UiKit.AMBER_DARK)
+	_coach_hint.visible = false
+	col.add_child(_coach_hint)
 	var btns := UiKit.hbox(8)
-	var skip := UiKit.ghost("Skip tips")
-	skip.pressed.connect(end_coach)
-	btns.add_child(skip)
+	_coach_skip = UiKit.ghost("Skip tips")
+	_coach_skip.pressed.connect(func() -> void:
+		if _guide_on:
+			guide_skip_requested.emit()
+		else:
+			end_coach())
+	btns.add_child(_coach_skip)
 	btns.add_child(UiKit.spacer())
 	_coach_next = UiKit.primary("Next", "chevron-right")
-	_coach_next.pressed.connect(func() -> void: _coach_go(_coach_i + 1))
+	_coach_next.pressed.connect(func() -> void:
+		if _guide_on:
+			guide_next_requested.emit()
+		else:
+			_coach_go(_coach_i + 1))
 	btns.add_child(_coach_next)
 	col.add_child(btns)
 
@@ -1995,8 +2371,9 @@ func start_coach() -> void:
 	_coach_go(0)
 
 
+## Tips or a guide step are logically on screen (the card may still be fading out after).
 func coach_active() -> bool:
-	return _coach.visible
+	return _coach.visible and (_guide_on or _coach_i >= 0)
 
 
 func _coach_go(i: int) -> void:
@@ -2050,7 +2427,138 @@ func _place_coach() -> void:
 func end_coach() -> void:
 	_coach.visible = false
 	_coach_i = -1
+	_guide_on = false
 	coach_finished.emit()
+
+
+# ---------------------------------------------------------------- guided tutorial card
+
+signal guide_next_requested
+signal guide_skip_requested
+var _guide_on := false
+var _guide_target := ""
+var _guide_wait := ""
+var _coach_hint: Label
+var _coach_skip: Button
+## main sets this: target id -> Rect2 in HUD root coordinates (Rect2() = no target).
+var guide_resolver := Callable()
+
+
+## One guided step: a card with a title, one or two sentences, and either Next (reading steps)
+## or nothing (the player has to do the thing). UI targets get a ring and the rest of the
+## screen dimmed; map targets are marked in the world, and nothing blocks the map.
+func show_guide(st: Dictionary, n: int, total: int, touch: bool) -> void:
+	_guide_on = true
+	_coach_i = -1
+	_guide_target = str(st.get("target", ""))
+	_guide_wait = str(st.get("wait", "next"))
+	_coach_title.text = str(st.get("title", ""))
+	_coach_text.text = str(st.get("touch", st.get("body", ""))) if touch else str(st.get("body", ""))
+	_coach_step_label.text = "%d / %d" % [n + 1, total]
+	_coach_hint.visible = false
+	_coach_next.visible = _guide_wait == "next"
+	_coach_next.text = "Got it" if bool(st.get("last", false)) else "Next"
+	_coach_skip.text = "Skip tutorial"
+	var was := _coach.visible
+	_coach.visible = true
+	place_guide()
+	call_deferred("place_guide")
+	if was:
+		Motion.pulse(_coach_card, 1.04, 0.3)
+	Motion.appear(_coach_card, Vector2(0, 12), Motion.BASE)
+	if not UiKit.reduce_motion and is_inside_tree():
+		var tw := Motion.tween(_coach_ring, "ring").set_loops(4)
+		tw.tween_property(_coach_ring, "modulate:a", 0.45, 0.45)
+		tw.tween_property(_coach_ring, "modulate:a", 1.0, 0.45)
+
+
+func guide_active() -> bool:
+	return _guide_on and _coach.visible
+
+
+func guide_text() -> String:
+	return _coach_title.text + "\n" + _coach_text.text if guide_active() else ""
+
+
+## A nudge under the current step ("Tip: …"), with a gentle bump.
+func guide_hint(text: String) -> void:
+	if not guide_active() or text == "":
+		return
+	_coach_hint.text = text
+	_coach_hint.visible = true
+	place_guide()
+	Motion.pulse(_coach_card, 1.05, 0.35)
+
+
+func hide_guide() -> void:
+	if not _coach.visible:
+		return
+	_guide_on = false
+	Motion.disappear(_coach_card, Vector2(0, 10), Motion.FAST, func() -> void:
+		if not _guide_on and _coach_i < 0:
+			_coach.visible = false)
+
+
+## Screen rect of a HUD target in root coordinates (Rect2() if none / hidden).
+func ui_target_rect(target: String) -> Rect2:
+	var c: Control = null
+	if target.begins_with("ui:chip:"):
+		var key := target.trim_prefix("ui:chip:")
+		if _chips.has(key):
+			c = _chips[key]["panel"]
+	elif target.begins_with("ui:tool:"):
+		var k := int(target.trim_prefix("ui:tool:"))
+		if k < _tool_buttons.size():
+			c = _tool_buttons[k]
+	elif target == "ui:speed":
+		c = _speed_card.get_child(0).get_child(0) as Control
+	elif target == "ui:goals":
+		c = _obj_card
+	elif target == "ui:history":
+		c = events_button
+	if c == null or not c.is_visible_in_tree():
+		return Rect2()
+	var s := root.get_global_transform_with_canvas().get_scale()
+	return Rect2((c.global_position - root.global_position) / s, c.size * c.get_global_transform().get_scale() / s).grow(8)
+
+
+## Re-place the card / ring / arrow (the target may move with the camera or the layout).
+func place_guide() -> void:
+	if not _guide_on:
+		return
+	var r := Rect2()
+	if _guide_target.begins_with("ui:"):
+		r = ui_target_rect(_guide_target)
+	elif _guide_target != "" and guide_resolver.is_valid():
+		r = guide_resolver.call(_guide_target)
+	var ui := _guide_target.begins_with("ui:") and r.size != Vector2.ZERO
+	var sz := root.size
+	_coach_scrim.size = sz
+	_coach_scrim.visible = ui and _guide_wait == "next"  # reading: dim the rest; doing: keep it all usable
+	_coach_scrim.hole = r
+	_coach_ring.visible = ui
+	_coach_ring.position = r.position
+	_coach_ring.size = r.size
+	_coach_card.reset_size()
+	var cs := _coach_card.size
+	if r.size == Vector2.ZERO:
+		# nothing to point at: the card sits above the toolbar
+		_coach_arrow.visible = false
+		_coach_card.position = Vector2((sz.x - cs.x) * 0.5, maxf(10.0, _toolbar.position.y - cs.y - 70.0))
+		return
+	_coach_arrow.visible = true
+	var below := true
+	var p := Vector2(r.get_center().x - cs.x * 0.5, r.end.y + 22)
+	if p.y + cs.y > sz.y - 10 or (not ui and r.get_center().y > sz.y * 0.5):
+		p.y = r.position.y - cs.y - 22
+		below = false
+	p.x = clampf(p.x, 10, sz.x - cs.x - 10)
+	p.y = clampf(p.y, 10, sz.y - cs.y - 10)
+	_coach_card.position = p
+	var tip_x := clampf(r.get_center().x, p.x + 24, p.x + cs.x - 24)
+	_coach_arrow.point_down = not below
+	_coach_arrow.size = Vector2(28, 16)
+	_coach_arrow.position = Vector2(tip_x - 14, p.y - 16) if below else Vector2(tip_x - 14, p.y + cs.y)
 
 
 ## The little triangle that ties a coach card to the control it is about.

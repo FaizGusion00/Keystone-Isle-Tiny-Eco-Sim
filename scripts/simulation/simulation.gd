@@ -1127,6 +1127,37 @@ func _keystone() -> void:
 			+ 0.15 * world.k_fish + 0.1 * world.k_wildlife + 0.2 * world.k_village)
 
 
+# ---------------------------------------------------------------- read-only rule queries (UI)
+
+## Why the village is (not) growing, mirroring _population exactly. Read-only.
+## {fed, water, fed_ok, water_ok, store, store_need, store_ok, homes, room_ok, leaving, next_in, ready}
+func growth_status() -> Dictionary:
+	var v := world.villagers
+	var cap := world.housing_capacity()
+	var store_need := float(v) * 3.0
+	var d := {
+		"fed": world.food_ema, "water": world.water_ema,
+		"fed_ok": world.food_ema > 0.95, "water_ok": world.water_ema > 0.95,
+		"store": world.food_store, "store_need": store_need, "store_ok": world.food_store >= store_need,
+		"villagers": v, "homes": cap, "room_ok": v < cap,
+		"leaving": (world.food_ema < 0.6 or world.water_ema < 0.6) and not world.relaxed,
+		"next_in": POP_PERIOD - world.tick % POP_PERIOD,
+	}
+	d["ready"] = d["fed_ok"] and d["water_ok"] and d["store_ok"] and d["room_ok"]
+	return d
+
+
+## Daily food flows at the current state (estimates for the UI). Read-only.
+func food_status() -> Dictionary:
+	var v := float(world.villagers)
+	var eat := v * FOOD_PER_VILLAGER
+	var catch := minf(world.fish * FISH_CATCH_RATE, v * FISH_CATCH_PER_VILLAGER)
+	var hunt := minf(world.goats * HUNT_RATE, v * HUNT_PER_VILLAGER)
+	var farms := world.count_structures(WorldState.Structure.FARM)
+	return {"eat": eat, "fish": catch, "goats": hunt, "farms": farms,
+		"farm_daily": farms * HARVEST_FOOD / CROP_DAYS, "days": world.food_store / maxf(eat, 0.001)}
+
+
 ## Chebyshev distance from tile i to the settlement (large if none).
 func distance_to_settlement(x: int, y: int) -> int:
 	if world.settlement_index < 0:
@@ -1255,9 +1286,9 @@ func can_apply(action: int, x: int, y: int) -> String:
 		return r
 	var c := action_cost(action)
 	if world.labor + 1e-6 < c.x:
-		return I18n.f("Not enough labor: needs %d, you have %d", [ceili(c.x), floori(world.labor)])
+		return "Not enough labor: needs %d, you have %d" % [ceili(c.x), floori(world.labor)]
 	if world.wood + 1e-6 < c.y:
-		return I18n.f("Not enough wood: needs %d, you have %d (clear forest for wood)", [ceili(c.y), floori(world.wood)])
+		return "Not enough wood: needs %d, you have %d (clear forest for wood)" % [ceili(c.y), floori(world.wood)]
 	return ""
 
 

@@ -13,6 +13,8 @@ const CAMPAIGN := [
 		"objectives": [{"kind": "farms", "target": 1}, {"kind": "villagers", "target": 12}],
 		"deadline": 240, "fail_villagers": 6,
 		"stars": [{"kind": "keystone", "target": 85}, {"kind": "by_day", "target": 150}],
+		## a fuller larder than other islands, so the first harvest visibly tips the village into growth
+		"setup": {"food": 28.0},
 	},
 	{
 		"id": "expanding_village", "kind": "campaign", "index": 2, "title": "The Expanding Village",
@@ -123,6 +125,8 @@ const SANDBOX := {
 	"id": "sandbox", "kind": "sandbox", "index": 0, "title": "Sandbox",
 	"blurb": "Your island, your rules. No goals, no deadline.",
 	"intro": "", "seed": 0, "size": 32, "preset": 0, "objectives": [],
+	## display-only ideas for free play (ticked on the goals card, never end the run)
+	"ideas": [{"kind": "villagers", "target": 15}, {"kind": "harvests", "target": 10}, {"kind": "keystone", "target": 80}],
 }
 
 const SIZES := [24, 32, 48, 64]

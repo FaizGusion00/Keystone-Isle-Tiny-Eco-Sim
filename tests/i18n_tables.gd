@@ -24,6 +24,11 @@ static func all_texts() -> PackedStringArray:
 	for v in Hud.TOOL_LABELS: add.call(v)
 	for v in Hud.TOOL_TIPS: add.call(v)
 	for v in Screens.SIZE_LABELS: add.call(v)
+	for v in Hud.TOOL_HINTS: add.call(v)
+	for st in GuideSteps.TUTORIAL:
+		for k in ["title", "body", "touch", "hint"]:
+			if st.has(k):
+				add.call(st[k])
 	for a in Achievements.LIST:
 		add.call(a["title"])
 		add.call(a["text"])

@@ -128,6 +128,15 @@ static func handle_cmdline(main: Node) -> void:
 			var p: PackedStringArray = String(args["select"]).split(",")
 			st = Vector2i(int(p[0]), int(p[1]))
 		main.select_tile(st)
+	if args.has("guide"):  # --guide=N : the tutorial at step N (earlier steps' tools open)
+		main.start_tutorial()
+		var n := int(args["guide"])
+		if n >= 4:  # steps after "build a farm" need the farm
+			var bf: Vector2i = main.best_farm_tile()
+			main.sim.apply_action(Simulation.Action.BUILD_FARM, bf.x, bf.y)
+			main.world_view.refresh()
+		main.guide.start(GuideSteps.TUTORIAL, n)
+		main.focus_village()
 	if args.has("tool"):  # --tool=farm|house|dam|clear|plant|restore|remove
 		var names := {"inspect": 0, "clear": 1, "plant": 2, "farm": 3, "house": 4, "dam": 5, "restore": 6, "remove": 7}
 		main.hud.select_tool(int(names.get(String(args["tool"]), 0)))
@@ -150,6 +159,9 @@ static func handle_cmdline(main: Node) -> void:
 		await main.get_tree().process_frame
 		await main.get_tree().process_frame
 		main._on_hover(main.get_viewport().get_canvas_transform() * wv.to_global(wv.top_center(ht.x, ht.y)))
+	if args.has("chip"):  # --chip=villagers|food|… : open that chip's explanation card
+		await main.get_tree().process_frame
+		main.hud.explain_chip(main.hud._chips[String(args["chip"])]["panel"], "info")
 	if args.has("perf"):
 		_perf(main, int(args["perf"]))
 	elif args.has("screenshot"):

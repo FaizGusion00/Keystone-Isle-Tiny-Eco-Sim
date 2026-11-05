@@ -78,6 +78,7 @@ var _corner_fill := PackedByteArray()  ## per water tile: concave shore corners 
 var _cur := PackedVector2Array()       ## top face of the tile being drawn
 var highlight: TileHighlight
 var placement: PlacementOverlay
+var guide_marker: GuideMarker
 var water: Node2D
 var _water_mat: ShaderMaterial
 var _world_mat: ShaderMaterial
@@ -107,6 +108,11 @@ func _ready() -> void:
 	highlight.view = self
 	highlight.z_index = 10
 	add_child(highlight)
+	guide_marker = GuideMarker.new()
+	guide_marker.view = self
+	guide_marker.z_index = 12
+	guide_marker.visible = false
+	add_child(guide_marker)
 
 
 ## Reduce-motion turns wind sway, flicker and wave motion off.
@@ -149,7 +155,9 @@ func set_world(ws: WorldState, ev: EventLog = null) -> void:
 			_chunks.append(c)
 	move_child(placement, -1)
 	move_child(highlight, -1)
+	move_child(guide_marker, -1)
 	placement.clear()
+	guide_marker.set_tile(Vector2i(-1, -1))
 	_data_img = Image.create(ws.width, ws.height, false, Image.FORMAT_RGBA8)
 	_data_tex = ImageTexture.create_from_image(_data_img)
 	_data_bytes.resize(n * 4)

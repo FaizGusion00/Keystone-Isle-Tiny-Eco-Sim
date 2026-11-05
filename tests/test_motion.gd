@@ -9,6 +9,7 @@ func _main() -> Node:
 	main.hud.clear_popups()
 	if main.hud.coach_active():
 		main.hud.end_coach()
+	open_main(main)
 	return main
 
 

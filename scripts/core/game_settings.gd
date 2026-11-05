@@ -10,6 +10,7 @@ const DEFAULTS := {
 }
 
 var values: Dictionary = DEFAULTS.duplicate()
+var first_run := false  ## no settings file yet: the very first launch on this device
 var path := PATH
 
 
@@ -19,6 +20,7 @@ static func load_from(p: String = PATH) -> GameSettings:
 	var cfg := ConfigFile.new()
 	if cfg.load(p) != OK:
 		s.values["language"] = I18n.default_language()  # first launch: follow the device
+		s.first_run = true
 	else:
 		for k in DEFAULTS:
 			var v = cfg.get_value("settings", k, DEFAULTS[k])

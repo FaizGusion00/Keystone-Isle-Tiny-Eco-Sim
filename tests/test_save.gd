@@ -176,8 +176,14 @@ func test_app_lifecycle_suspend_resume_and_relaunch() -> void:
 	main.save_path = p
 	tree.root.add_child(main)
 	assert_true(main.sim.scenario != null, "first launch starts the tutorial")
-	assert_true(main.hud.popup_text().begins_with("Tutorial"), "intro popup shown")
-	main.hud.dismiss_popup()
+	assert_true(main.guide.active(), "the guided tutorial opens on the map (no wall of text)")
+	main._process(0.016)
+	main.suspend()
+	main._suspended_at -= 100.0
+	main.resume()
+	assert_eq(main.catch_up, null, "a tutorial step waiting to be read keeps the island frozen while away")
+	main.guide.stop(true)
+	main._process(0.016)
 	var start_sum: String = main.sim.state_checksum()
 	# app goes to background: immediate atomic autosave + frozen clock
 	main._notification(Node.NOTIFICATION_APPLICATION_PAUSED)
@@ -190,8 +196,7 @@ func test_app_lifecycle_suspend_resume_and_relaunch() -> void:
 	assert_true(main.catch_up != null and main.catch_up.total == 100, "catch-up scheduled")
 	while main.catch_up != null:
 		main._process(0.016)
-	var ref := Simulation.create(Scenario.TUTORIAL_SEED, 32)
-	ref.scenario = Scenario.tutorial()
+	var ref := ScenarioCatalog.create_sim(ScenarioCatalog.get_def(Scenario.TUTORIAL_ID))
 	ref.run(100)
 	assert_eq(main.sim.state_checksum(), ref.state_checksum(), "catch-up == normal play")
 	assert_true(main.hud.popup_text().begins_with("While you were away"), main.hud.popup_text())

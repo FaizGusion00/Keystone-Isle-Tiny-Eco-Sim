@@ -12,10 +12,9 @@ const SCREENS := ["menu", "campaign", "challenges", "new_world", "settings", "pa
 static func run(code: String) -> Dictionary:
 	var was_locked := I18n.locked
 	I18n.locked = ""
-	I18n.set_language(code)
+	I18n.set_language("en")
 	I18n.misses.clear()
 	I18n.produced.clear()
-	I18n.record_misses = true
 	var tree := Engine.get_main_loop() as SceneTree
 	DirAccess.make_dir_recursive_absolute("user://test_i18n")
 	var p := "user://test_i18n/sweep.json"
@@ -25,6 +24,9 @@ static func run(code: String) -> Dictionary:
 	tree.root.add_child(main)
 	main.settings.values["language"] = code
 	main.apply_settings()
+	# record from here: at the switch itself every label re-translates its old (English) text once
+	I18n.record_misses = true
+	main._retranslate()
 	walk(main)
 	# tutorial: intro popup, then each coach step
 	main.start_tutorial()
@@ -128,6 +130,11 @@ static func _play(main: Node) -> void:
 		sim.run(50)
 		main._on_ticked(50)
 		walk(main)
+	# every top-bar chip's explanation card
+	for key in main.hud._chips:
+		main.hud.explain_chip(main.hud._chips[key]["panel"], "info")
+		walk(main)
+	main.hud.close_rule_card()
 	# inspector on one tile of each kind / structure
 	var kinds := {}
 	for y in ws.height:
@@ -166,6 +173,9 @@ static func filter_formatted(misses: Dictionary, table: Dictionary) -> Dictionar
 		var v := str(table[k])
 		if not v.contains("%"):
 			continue
+		var bare := RegEx.create_from_string("%[-+0-9.]*[dfs%]").sub(v, "", true)
+		if not I18n.wants_translation(bare):
+			continue  # "%s %s", "%s · %s": would match any text and hide real misses
 		var rx := "^"
 		var i := 0
 		while i < v.length():
