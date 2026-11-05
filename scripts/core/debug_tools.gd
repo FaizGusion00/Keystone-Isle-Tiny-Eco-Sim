@@ -142,7 +142,16 @@ static func handle_cmdline(main: Node) -> void:
 		main.hud.select_tool(int(names.get(String(args["tool"]), 0)))
 	if args.has("hover"):  # --hover=x,y : ghost + tag on that tile, as the mouse would show
 		var ht := Vector2i.ZERO
-		if String(args["hover"]) == "best":  # the first tile the selected tool may use, nearest the village
+		if String(args["hover"]) == "forest":  # the grown forest tile nearest the village
+			var vc0: Vector2i = main.sim.world.coords(main.sim.world.settlement_index)
+			var bd := 1 << 30
+			for i in main.sim.world.tile_count():
+				var q0: Vector2i = main.sim.world.coords(i)
+				var d0 := absi(q0.x - vc0.x) + absi(q0.y - vc0.y)
+				if main.sim.world.land_type[i] == LandType.FOREST and d0 < bd and d0 > 2:
+					bd = d0
+					ht = q0
+		elif String(args["hover"]) == "best":  # the first tile the selected tool may use, nearest the village
 			var vc: Vector2i = main.sim.world.coords(main.sim.world.settlement_index)
 			var best := 1 << 30
 			var m: PackedByteArray = main.world_view.placement.mask
@@ -159,6 +168,9 @@ static func handle_cmdline(main: Node) -> void:
 		await main.get_tree().process_frame
 		await main.get_tree().process_frame
 		main._on_hover(main.get_viewport().get_canvas_transform() * wv.to_global(wv.top_center(ht.x, ht.y)))
+	if args.has("chainmap"):  # --chainmap : after --history=TYPE, press "Show on map"
+		await main.get_tree().process_frame
+		main.show_chain_on_map(main.hud._selected_event)
 	if args.has("chip"):  # --chip=villagers|food|… : open that chip's explanation card
 		await main.get_tree().process_frame
 		main.hud.explain_chip(main.hud._chips[String(args["chip"])]["panel"], "info")

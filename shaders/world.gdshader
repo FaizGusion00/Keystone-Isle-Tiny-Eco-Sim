@@ -7,6 +7,9 @@ shader_type canvas_item;
 //                    a per-animal phase (restored to 1.0 so the colour is unchanged)
 uniform float sway_strength = 1.0;
 uniform float wind = 1.0;
+// Island health drives the land's colour: a sick island fades to dusty sepia, a thriving one is
+// lush and saturated. 0 = health ~40 or less, 1 = health ~90+ (eased on the CPU).
+uniform float vitality = 1.0;
 varying float flicker;
 
 void vertex() {
@@ -36,6 +39,11 @@ void fragment() {
 	if (flicker > 0.5) {
 		float f = 0.85 + 0.15 * sin(TIME * 13.0 + FRAGCOORD.x * 0.05) * sway_strength;
 		c.rgb *= f;
+	} else {
+		float l = dot(c.rgb, vec3(0.299, 0.587, 0.114));
+		c.rgb = vec3(l) + (c.rgb - vec3(l)) * mix(0.42, 1.10, vitality);
+		c.rgb = mix(c.rgb, c.rgb * vec3(1.07, 0.95, 0.78), (1.0 - vitality) * 0.55);
+		c.rgb *= mix(0.94, 1.03, vitality);
 	}
 	COLOR = c;
 }

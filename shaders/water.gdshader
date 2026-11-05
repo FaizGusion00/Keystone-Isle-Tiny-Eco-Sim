@@ -11,6 +11,8 @@ uniform vec4 shallow_col : source_color = vec4(0.50, 0.76, 0.76, 1.0);
 uniform vec4 mud_col : source_color = vec4(0.58, 0.47, 0.32, 1.0);
 uniform vec4 foam_col : source_color = vec4(0.93, 0.96, 0.94, 1.0);
 uniform float overlay_mud = 0.0;
+uniform vec4 mud_light : source_color = vec4(0.74, 0.62, 0.42, 1.0);
+uniform float vitality = 1.0;  // island health: murky grey-green when sick, clear turquoise when well
 varying vec2 local_pos;
 
 float hash(vec2 p) { return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
@@ -34,12 +36,18 @@ void fragment() {
 	float depth = d.b;
 	float tm = TIME * motion;
 	float n = noise(t * 0.9 + vec2(tm * 0.12, tm * 0.08)) * 0.6 + noise(t * 2.2 - vec2(tm * 0.15, -tm * 0.1)) * 0.4;
-	vec3 col = mix(shallow_col.rgb, mid_col.rgb, smoothstep(0.0, 0.55, depth));
+	vec3 shallow = mix(vec3(0.46, 0.57, 0.52), shallow_col.rgb, vitality);
+	vec3 col = mix(shallow, mid_col.rgb, smoothstep(0.0, 0.55, depth));
 	col = mix(col, deep_col.rgb, smoothstep(0.55, 1.0, depth));
 	col += (n - 0.5) * 0.06;
-	// muddy plume
-	float mud = clamp(d.g * (1.0 + overlay_mud * 1.5), 0.0, 0.9);
-	col = mix(col, mud_col.rgb, mud * (0.75 + 0.25 * n));
+	// muddy plume: soil washed off the land clouds the sea, swirling as it drifts and settles
+	float mud = clamp(d.g * (1.0 + overlay_mud * 1.5), 0.0, 1.0);
+	float swirl = noise(t * 1.7 + vec2(n * 2.3, tm * 0.06)) * 0.6 + noise(t * 4.1 - vec2(tm * 0.09, n)) * 0.4;
+	float m = smoothstep(0.02, 0.55, mud) * (0.62 + 0.55 * swirl);
+	vec3 mudc = mix(mud_light.rgb, mud_col.rgb, smoothstep(0.25, 0.85, mud));
+	col = mix(col, mudc, clamp(m, 0.0, 0.93));
+	float edge = smoothstep(0.03, 0.08, mud) * (1.0 - smoothstep(0.08, 0.2, mud)) * (0.5 + swirl);
+	col = mix(col, mud_light.rgb, clamp(edge * 0.45, 0.0, 0.5));
 	// shore foam: animated bands where the land field fades out
 	float shore = smoothstep(0.08, 0.42, land);
 	float bands = 0.5 + 0.5 * sin(land * 26.0 - tm * 1.6 + n * 4.0);

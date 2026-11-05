@@ -78,6 +78,9 @@ func _ready() -> void:
 	hud.guide_next_requested.connect(func() -> void: guide.next())
 	hud.guide_skip_requested.connect(skip_tutorial)
 	hud.chip_explained.connect(func(key: String) -> void: guide.on_chip(key))
+	hud.events_closed.connect(func() -> void: world_view.threads.clear())
+	hud.chain_map_requested.connect(show_chain_on_map)
+	hud.moment_show_requested.connect(_show_moment_on_map)
 	action_done.connect(func(a: int, t: Vector2i) -> void: guide.on_action(a, t))
 	camera.hover_moved.connect(_on_hover)
 	audio = AudioDirector.new()
@@ -270,7 +273,8 @@ const PIN_ZOOM := 0.95
 
 
 func _place_village_pin() -> void:
-	if sim == null or sim.world.settlement_index < 0 or screens.is_open() or camera.zoom.x >= PIN_ZOOM 			or hud.guide_active():
+	if sim == null or sim.world.settlement_index < 0 or screens.is_open() or camera.zoom.x >= PIN_ZOOM \
+			or hud.guide_active() or world_view.threads.showing():
 		hud.place_village_pin(Vector2.INF, 0)
 		return
 	var v := sim.world.coords(sim.world.settlement_index)
@@ -649,6 +653,8 @@ func try_action(action: int, t: Vector2i) -> bool:
 	world_view.animate_change(t, action, before)
 	if action == Simulation.Action.CLEAR_TREES or action == Simulation.Action.DEMOLISH:
 		ambience.dust(t)
+	elif action == Simulation.Action.PLANT_TREES or action == Simulation.Action.RESTORE_LAND:
+		ambience.bloom(t)  # life returning: a green burst of leaves
 	ambience.pop(t)
 	ambience.float_text(t, _delta_text(sim.world.labor - labor0, sim.world.wood - wood0),
 		Color(1.0, 0.93, 0.80))
@@ -683,6 +689,7 @@ func _show_preview(action: int, t: Vector2i, screen_pos: Vector2) -> void:
 	var info := place_info(action, t)
 	world_view.placement.set_hover(t, info[0])
 	hud.show_place_tag(screen_pos, I18n.f("Tap again to build · %s", info[1]) if info[0] else info[1], info[0])
+	_preview_runoff(action, t)
 	if not info[0]:
 		hud.shake_place_tag()
 		AudioDirector.sfx("ui_error", 1.0, -6.0)
@@ -695,6 +702,7 @@ func _clear_preview() -> void:
 	_preview = Vector2i(-1, -1)
 	world_view.placement.set_hover(Vector2i(-1, -1), false)
 	hud.hide_place_tag()
+	_preview_runoff(Simulation.Action.NONE, Vector2i(-1, -1))
 
 
 ## [ok, text] for the placement tag: the cost if allowed, else the reason.
@@ -725,6 +733,21 @@ func _on_hover(screen_pos: Vector2) -> void:
 	var info := place_info(action, t)
 	world_view.placement.set_hover(t, info[0])
 	hud.show_place_tag(screen_pos, info[1], info[0])
+	_preview_runoff(action, t)
+
+
+## Clearing or farming opens soil to the rain: show where it would wash (downhill to the sea).
+func _preview_runoff(action: int, t: Vector2i) -> void:
+	if action == Simulation.Action.CLEAR_TREES or action == Simulation.Action.BUILD_FARM:
+		if t != _runoff_tile:
+			_runoff_tile = t
+			world_view.threads.preview_runoff(t)
+	elif _runoff_tile.x >= 0:
+		_runoff_tile = Vector2i(-1, -1)
+		world_view.threads.preview_runoff(_runoff_tile)
+
+
+var _runoff_tile := Vector2i(-1, -1)
 
 
 ## Recompute where the selected tool can be used (on tool change, after building, and as the
@@ -843,6 +866,7 @@ func _toast_new_events() -> void:
 			_last_rain_toast = day
 		var pr := 3 if EventLog.is_bad(t) else (2 if t in GOOD_NEWS else 1)
 		picks.append([pr, id])
+		_maybe_moment(id)
 	_seen_event_id = ev.next_id
 	if picks.is_empty():
 		return
@@ -861,7 +885,66 @@ func _toast_new_events() -> void:
 		hud.toast(EventText.title(ev, id, sim.world), 4.5, Hud.event_icon(ev.type_of(id)), bad)
 		if shown == 0:
 			AudioDirector.sfx("warn" if bad else "notify", 1.0, -4.0)
+			_auto_chain(id)
 		shown += 1
+
+
+## "Show on map": close History, frame the whole chain and let its threads play across the island.
+func show_chain_on_map(id: int) -> void:
+	hud.hide_events()
+	if world_view.threads.show_chain(sim.events, id) == 0:
+		return
+	_chain_at = Time.get_ticks_msec() / 1000.0
+	var r := world_view.threads.bounds()
+	r.position += world_view.position
+	var vs := get_viewport().get_visible_rect().size
+	var z := clampf(minf(vs.x * 0.7 / maxf(r.size.x, 1.0), vs.y * 0.6 / maxf(r.size.y, 1.0)), 0.6, 2.2)
+	camera.user_moved = true
+	camera.glide_to(r.get_center(), z)
+
+
+## The first time something big happens, explain it once (see Moments).
+var _moment_event := -1
+
+
+func _maybe_moment(id: int) -> void:
+	var m := Moments.for_event(sim.events.type_of(id))
+	if m.is_empty() or progress.moments.has(m[0]) or guide.active() or catch_up != null or hud.moment_open():
+		return
+	if not bool(settings.get_value("show_tutorial")):
+		return
+	if m[0] == "homes" and not hud.tool_available(Hud.Tool.BUILD_HOUSE):
+		return
+	progress.moments.append(m[0])
+	if persistence:
+		progress.save()
+	_moment_event = id
+	hud.show_moment(I18n.t(m[1]), I18n.t(m[2]), m[3])
+
+
+func _show_moment_on_map() -> void:
+	if _moment_event >= 0 and sim.events.has(_moment_event):
+		if sim.events.causes_of(_moment_event).is_empty():
+			var q := sim.events.pos_of(_moment_event)
+			if sim.world.in_bounds(q.x, q.y):
+				camera.user_moved = true
+				camera.glide_to(world_view.position + world_view.top_center(q.x, q.y), maxf(camera.zoom.x, 1.4))
+		else:
+			show_chain_on_map(_moment_event)
+
+
+## The most important new event lays its recorded causes on the map as glowing threads
+## (at most every CHAIN_GAP seconds, and never over an open History drawer).
+const CHAIN_GAP := 8.0
+var _chain_at := -100.0
+
+
+func _auto_chain(id: int) -> void:
+	var now := Time.get_ticks_msec() / 1000.0
+	if now - _chain_at < CHAIN_GAP or hud.events_open() or catch_up != null or sim.events.causes_of(id).is_empty():
+		return
+	if world_view.threads.show_chain(sim.events, id) > 0:
+		_chain_at = now
 
 
 ## Map animations: none while catching up or at the fastest speed (too much changes per second).
@@ -945,6 +1028,7 @@ func _check_achievements(force: bool) -> Array:
 
 func _refresh_ui() -> void:
 	world_view.refresh()
+	world_view.set_vitality_target(sim.world.keystone)
 	ambience.update_from_world()
 	hud.set_status(sim.world)
 	hud.set_day(sim.world.tick)
@@ -1168,7 +1252,8 @@ func _process(delta: float) -> void:
 	if _teaching:
 		_teaching = hud.coach_active() or hud.popup_open() or hud._coach_pending
 	# reading a guide step / tip holds time; "watch it happen" steps let it run
-	clock.teaching = _teaching or guide.holds_clock() or (hud.coach_active() and not hud.guide_active())
+	clock.teaching = _teaching or guide.holds_clock() or (hud.coach_active() and not hud.guide_active()) \
+		or hud.moment_open()  # a first-time explanation waits for the player to read it
 	if guide.active():
 		world_view.guide_marker.set_tile(_guide_tile(str(guide.current().get("target", ""))))
 		hud.place_guide()

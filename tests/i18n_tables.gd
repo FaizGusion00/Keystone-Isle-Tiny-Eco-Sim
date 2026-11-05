@@ -25,6 +25,9 @@ static func all_texts() -> PackedStringArray:
 	for v in Hud.TOOL_TIPS: add.call(v)
 	for v in Screens.SIZE_LABELS: add.call(v)
 	for v in Hud.TOOL_HINTS: add.call(v)
+	for m in Moments.BY_TYPE.values():
+		add.call(m[1])
+		add.call(m[2])
 	for st in GuideSteps.TUTORIAL:
 		for k in ["title", "body", "touch", "hint"]:
 			if st.has(k):

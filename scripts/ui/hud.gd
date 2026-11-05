@@ -7,6 +7,9 @@ extends CanvasLayer
 ##   coach-mark tutorial. Re-lays itself out for landscape/portrait, safe areas and UI scale.
 
 signal chip_explained(key: String)
+signal event_explained(id: int)   ## the History drawer opened an event's "why" chain
+signal events_closed
+signal chain_map_requested(id: int)  ## "Show on map": play this event's chain across the island
 signal new_island_requested
 signal tutorial_requested
 signal speed_requested(speed: int)
@@ -221,6 +224,7 @@ func _ready() -> void:
 	_build_award()
 	_build_place_tag()
 	_build_village_pin()
+	_build_moment()
 	_build_tool_hint()
 	_rule_card = RuleCard.new()
 	root.add_child(_rule_card)
@@ -287,7 +291,9 @@ func _layout(sz: Vector2) -> void:
 			HORIZONTAL_ALIGNMENT_LEFT, -1, 15).x + 6.0, minf(620.0, w - 70.0))
 		_tool_hint_label.custom_minimum_size.x = hw0
 		_tool_hint.reset_size()
-		_tool_hint.position = Vector2(l + (w - _tool_hint.size.x) * 0.5, bottom_y - _tool_hint.size.y + 2.0)
+		var hs := _tool_hint.get_combined_minimum_size()
+		_tool_hint.size = hs
+		_tool_hint.position = Vector2(l + (w - hs.x) * 0.5, bottom_y - hs.y + 2.0)
 		bottom_y = _tool_hint.position.y - 8.0
 	# --- top row: day chip | chips | speed
 	_day_card.reset_size()
@@ -1801,6 +1807,7 @@ func show_explanation(id: int) -> void:
 	if _event_log == null:
 		return
 	_selected_event = id
+	event_explained.emit(id)
 	for b in _events_list.get_children():
 		if b is Button:
 			(b as Button).set_pressed_no_signal(int(b.get_meta("event_id", -2)) == id)
@@ -1857,6 +1864,15 @@ func show_explanation(id: int) -> void:
 			var tw := cm.create_tween()
 			tw.tween_property(cm, "modulate:a", 1.0, 0.18).set_delay(0.04 * k)
 		k += 1
+	if k > 1:
+		var showb := UiKit.button("Show on map", Vector2(0, 50), "map", "Primary")
+		showb.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
+		var eid := id
+		showb.pressed.connect(func() -> void: chain_map_requested.emit(eid))
+		var mm := MarginContainer.new()
+		mm.add_theme_constant_override("margin_top", 6)
+		mm.add_child(showb)
+		_chain.add_child(mm)
 
 
 func explanation_text() -> String:
@@ -1869,6 +1885,7 @@ func hide_events() -> void:
 	if not events_panel.visible:
 		return
 	_events_closed = true
+	events_closed.emit()
 	if UiKit.reduce_motion or not is_inside_tree():
 		events_panel.visible = false
 		relayout()
@@ -2054,6 +2071,75 @@ func notification_rects() -> Array[Rect2]:
 	return out
 
 
+# ================================================================== first-time moments
+
+signal moment_show_requested
+signal moment_closed
+var _moment: PanelContainer
+var _moment_title: Label
+var _moment_text: Label
+var _moment_icon: PanelContainer
+
+
+func _build_moment() -> void:
+	_moment = UiKit.card()
+	_moment.visible = false
+	_moment.custom_minimum_size = Vector2(360, 0)
+	var col := UiKit.vbox(8)
+	_moment.add_child(col)
+	var head := UiKit.hbox(10)
+	_moment_icon = UiKit.icon_badge("sparkles", UiKit.AMBER_SOFT, UiKit.AMBER_DARK, 40)
+	head.add_child(_moment_icon)
+	_moment_title = UiKit.label("", 20, "Heading")
+	_moment_title.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	head.add_child(_moment_title)
+	col.add_child(head)
+	_moment_text = UiKit.wrap_label("", "", 320)
+	_moment_text.add_theme_font_size_override("font_size", 16)
+	col.add_child(_moment_text)
+	var btns := UiKit.hbox(8)
+	var ok := UiKit.ghost("Got it")
+	ok.pressed.connect(func() -> void: close_moment())
+	btns.add_child(ok)
+	btns.add_child(UiKit.spacer())
+	var show := UiKit.primary("Show me", "map")
+	show.pressed.connect(func() -> void:
+		close_moment()
+		moment_show_requested.emit())
+	btns.add_child(show)
+	col.add_child(btns)
+	root.add_child(_moment)
+
+
+## A one-line explanation of something that just happened for the first time.
+func show_moment(title: String, line: String, icon_name: String) -> void:
+	_moment_title.text = title
+	_moment_text.text = line
+	(_moment_icon.get_child(0) as TextureRect).texture = UiKit.icon_tex(icon_name)
+	_moment_text.custom_minimum_size.x = minf(320.0, root.size.x - 80.0)
+	_moment.custom_minimum_size.x = minf(360.0, root.size.x - 24.0)
+	_moment.visible = true
+	_moment.reset_size()
+	var sz := _moment.get_combined_minimum_size()
+	_moment.position = Vector2((root.size.x - sz.x) * 0.5, maxf(10.0, _toolbar.position.y - sz.y - 70.0))
+	Motion.appear(_moment, Vector2(0, 16), Motion.SLOW)
+	AudioDirector.sfx("notify", 0.9, -2.0)
+
+
+func moment_open() -> bool:
+	return _moment.visible and not Motion.animating(_moment)
+
+
+func moment_text() -> String:
+	return _moment_title.text + "\n" + _moment_text.text if _moment.visible else ""
+
+
+func close_moment() -> void:
+	if _moment.visible:
+		Motion.disappear(_moment, Vector2(0, 12), Motion.FAST)
+		moment_closed.emit()
+
+
 # ================================================================== village pin
 
 signal village_pin_pressed
@@ -2064,6 +2150,7 @@ var _village_pin: Button
 func _build_village_pin() -> void:
 	_village_pin = UiKit.button("", Vector2(0, 40), "home", "Chip")
 	_village_pin.visible = false
+	_village_pin.set_meta("layout_owned", true)  # it follows the camera every frame: animations only fade
 	_village_pin.add_theme_font_size_override("font_size", 15)
 	_village_pin.pressed.connect(func() -> void: village_pin_pressed.emit())
 	root.add_child(_village_pin)
@@ -2097,7 +2184,7 @@ func village_pin_visible() -> bool:
 ## screens have no hover tooltips).
 const TOOL_HINTS := [
 	"",
-	"Cut grown forest for wood (+4 each). Bare slopes wash away in heavy rain.",
+	"Cut grown forest for wood (+4 each). The brown dashes show where its soil will wash in the rain.",
 	"Plant trees on open land. Forest holds soil and water and keeps streams clear.",
 	"On lowland or grassland within 5 tiles of the village. A harvest every ~30 days.",
 	"Next to the village or another house. Each house has room for 4 more people.",
@@ -2111,6 +2198,7 @@ func _build_tool_hint() -> void:
 	_tool_hint = UiKit.card("Chip")
 	_tool_hint.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	_tool_hint.visible = false
+	_tool_hint.set_meta("layout_owned", true)  # the layout places it; animations only fade
 	var row := UiKit.hbox(8)
 	_tool_hint.add_child(row)
 	_tool_hint_icon = UiKit.icon("info", 18, UiKit.TEAL_DARK)

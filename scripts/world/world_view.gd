@@ -81,10 +81,16 @@ var placement: PlacementOverlay
 var fx: WorldFx
 var auto_fx := true                    ## animate changes the simulation makes (crops, cottages)
 var _fx_hide := PackedByteArray()      ## tiles whose decoration WorldFx is drawing right now
+var _plume := PackedFloat32Array()     ## visual mud in the sea: lingers, spreads, settles (view only)
+var _plume_tmp := PackedFloat32Array()
+var vitality := 1.0                    ## eased island health 0..1 fed to the world / water shaders
+var _vitality_target := 1.0
 var _recording := false
 var _auto_changes: Array[int] = []
 var _rec: Array = []
 var guide_marker: GuideMarker
+var threads: RippleThreads
+var fish: FishSchools
 var water: Node2D
 var _water_mat: ShaderMaterial
 var _world_mat: ShaderMaterial
@@ -104,6 +110,11 @@ func _ready() -> void:
 	water.z_index = -1
 	water.draw.connect(_draw_water)
 	add_child(water)
+	fish = FishSchools.new()
+	fish.name = "Fish"
+	fish.view = self
+	fish.z_index = -1
+	add_child(fish)
 	texture_filter = CanvasItem.TEXTURE_FILTER_LINEAR_WITH_MIPMAPS  # no shimmer when zoomed out
 	fx = WorldFx.new()
 	fx.name = "Fx"
@@ -120,6 +131,11 @@ func _ready() -> void:
 	highlight.view = self
 	highlight.z_index = 10
 	add_child(highlight)
+	threads = RippleThreads.new()
+	threads.name = "Threads"
+	threads.view = self
+	threads.z_index = 13
+	add_child(threads)
 	guide_marker = GuideMarker.new()
 	guide_marker.view = self
 	guide_marker.z_index = 12
@@ -169,10 +185,20 @@ func set_world(ws: WorldState, ev: EventLog = null) -> void:
 			_chunks.append(c)
 	_fx_hide.resize(n)
 	_fx_hide.fill(0)
+	_plume.resize(n)
+	_plume.fill(0.0)
+	_plume_tmp.resize(n)
+	vitality = vitality_for(ws.keystone)
+	_vitality_target = vitality
+	_apply_vitality()
 	move_child(fx, -1)
 	move_child(placement, -1)
 	move_child(highlight, -1)
+	fish.set_world()
+	move_child(threads, -1)
 	move_child(guide_marker, -1)
+	threads.clear()
+	threads.preview_runoff(Vector2i(-1, -1))
 	placement.clear()
 	guide_marker.set_tile(Vector2i(-1, -1))
 	_data_img = Image.create(ws.width, ws.height, false, Image.FORMAT_RGBA8)
@@ -390,6 +416,7 @@ func _update_water_data() -> void:
 	var n := world.tile_count()
 	var lt := world.land_type
 	var mud_boost := 1.6 if overlay == Overlay.WATER else 1.0
+	_spread_plume()
 	for i in n:
 		var t: int = lt[i]
 		var o := i * 4
@@ -397,12 +424,76 @@ func _update_water_data() -> void:
 		_data_bytes[o] = 255 if land else 0
 		var mud := 0.0
 		if not land:
-			mud = clampf(world.sediment[i] * 10.0 * mud_boost, 0.0, 0.85)
+			mud = clampf(_plume[i] * mud_boost, 0.0, 1.0)
 		_data_bytes[o + 1] = int(mud * 255.0)
 		_data_bytes[o + 2] = 0 if land else int(clampf(1.0 - world.elevation[i] / IslandGenerator.SHALLOW_MAX, 0.0, 1.0) * 255.0)
 		_data_bytes[o + 3] = 255
 	_data_img.set_data(world.width, world.height, false, Image.FORMAT_RGBA8, _data_bytes)
 	_data_tex.update(_data_img)
+
+
+## The sea's mud as the player sees it: fresh sediment shows at once, then the cloud drifts
+## into neighbouring water and settles over a month or two, so a cleared hill leaves a visible
+## brown plume instead of a few tiles that flicker for a day. Visual only (rules use sediment).
+const PLUME_DECAY := 0.982   ## per update: a plume fades over a month or two
+const PLUME_REACH := 0.70    ## each tile of open water further from the mud: this much of it
+
+
+func _spread_plume() -> void:
+	var w := world.width
+	var h := world.height
+	var lt := world.land_type
+	var sed := world.sediment
+	for i in world.tile_count():
+		if lt[i] > LandType.SHALLOW_WATER:
+			_plume_tmp[i] = 0.0
+			continue
+		var x := i % w
+		var y := i / w
+		var nb := 0.0
+		if x > 0 and lt[i - 1] <= LandType.SHALLOW_WATER:
+			nb = _plume[i - 1]
+		if x < w - 1 and lt[i + 1] <= LandType.SHALLOW_WATER:
+			nb = maxf(nb, _plume[i + 1])
+		if y > 0 and lt[i - w] <= LandType.SHALLOW_WATER:
+			nb = maxf(nb, _plume[i - w])
+		if y < h - 1 and lt[i + w] <= LandType.SHALLOW_WATER:
+			nb = maxf(nb, _plume[i + w])
+		var v := maxf(_plume[i], nb * PLUME_REACH) * PLUME_DECAY
+		_plume_tmp[i] = maxf(clampf(sed[i] * 10.0, 0.0, 1.0), v if v > 0.01 else 0.0)
+	var sw := _plume
+	_plume = _plume_tmp
+	_plume_tmp = sw
+
+
+## How muddy the sea looks at tile i (0..1), as drawn.
+func plume_at(i: int) -> float:
+	return _plume[i] if i < _plume.size() else 0.0
+
+
+static func vitality_for(keystone: float) -> float:
+	return smoothstep(40.0, 90.0, keystone)
+
+
+func set_vitality_target(keystone: float) -> void:
+	_vitality_target = vitality_for(keystone)
+	set_process(true)
+
+
+func _process(delta: float) -> void:
+	if absf(vitality - _vitality_target) < 0.002:
+		vitality = _vitality_target
+		_apply_vitality()
+		set_process(false)
+		return
+	vitality = lerpf(vitality, _vitality_target, 1.0 - exp(-delta * 1.2))
+	_apply_vitality()
+
+
+func _apply_vitality() -> void:
+	if _world_mat != null:
+		_world_mat.set_shader_parameter("vitality", vitality)
+		_water_mat.set_shader_parameter("vitality", vitality)
 
 
 func set_overlay(o: int) -> void:
@@ -520,6 +611,7 @@ func deco_key(i: int) -> int:
 			k |= 1 << bit
 		bit += 1
 	k |= (1 if overlay != Overlay.NONE else 0) << 25
+	k |= mini(3, int(world.erosion_accum[i] * 25.0)) << 28         # 2 bits: fresh gullies
 	if _fx_hide.size() > i and _fx_hide[i] != 0:
 		k |= 1 << 30                                               # WorldFx draws this tile's decoration
 	return k
@@ -658,6 +750,9 @@ func draw_tile(cv: CanvasItem, x: int, y: int) -> void:
 		_vary(col, x + 1, y + 1) * _lit((y + 1) * cw + x + 1) * (_occl(x + 1, y + 1) if ao else Color.WHITE),
 		_vary(col, x, y + 1) * _lit((y + 1) * cw + x) * (_occl(x, y + 1) if ao else Color.WHITE)]), NO_UV)
 	var deco := _deco[i]
+	var scars := (deco >> 28) & 3
+	if scars > 0 and overlay == Overlay.NONE:
+		_draw_gullies(cv, i, top, scars)
 	if (deco >> 30) & 1:
 		_draw_streams(cv, x, y, i, top, deco)
 		return  # WorldFx is animating what stands here
@@ -923,6 +1018,26 @@ func animate_change(t: Vector2i, action: int, before: Array) -> void:
 			fx.fall(i, before, "sink")
 		_:
 			fx.grow(i, "grow")
+
+
+## Fresh soil loss shows as brown gullies cut downhill (fade as the land recovers).
+func _draw_gullies(cv: CanvasItem, i: int, top: Vector2, level: int) -> void:
+	var dir := Vector2(0.9, 0.45)
+	var j := down[i] if i < down.size() else -1
+	if j >= 0:
+		var a := world.coords(i)
+		var b := world.coords(j)
+		dir = (Iso.tile_to_local(b.x, b.y) - Iso.tile_to_local(a.x, a.y)).normalized()
+	var side := Vector2(-dir.y, dir.x)
+	var col := Color(0.36, 0.24, 0.14, 0.16 + 0.14 * level)
+	var h := hash_of(i, 31)
+	for g in level + 1:
+		var o := side * (float((h >> (g * 3)) % 9) - 4.0) * 1.6 - dir * 7.0
+		var pts := PackedVector2Array()
+		for s in 5:
+			var u := s / 4.0
+			pts.append(top + o + dir * (u * 15.0) + side * sin(u * 6.0 + g * 1.7) * 1.4)
+		cv.draw_polyline(pts, col, 1.3 + 0.3 * level)
 
 
 ## Hide / show a tile's decoration in its chunk (WorldFx draws it meanwhile). Redraws one chunk.

@@ -447,6 +447,17 @@ func pop(tile: Vector2i, color: Color = Color(1, 0.95, 0.75)) -> void:
 	add_child(ring)
 
 
+## Planting / restoring: leaves and sparkles rise and a green ring spreads over the tile.
+func bloom(tile: Vector2i) -> void:
+	if view == null:
+		return
+	pop(tile, Color(0.62, 0.95, 0.55))
+	if reduce_motion:
+		return
+	var at := view.position + view.top_center(tile.x, tile.y)
+	burst(at + Vector2(0, -2), Color(0.55, 0.92, 0.45, 0.95), Color(0.85, 1.0, 0.6, 0.0), 16, 1.0, 40.0)
+
+
 ## A puff of dust where trees came down or a building was taken apart.
 func dust(tile: Vector2i) -> void:
 	if view == null or reduce_motion:
