@@ -48,6 +48,12 @@ Controls (touch and mouse/keyboard):
   at most two at a time. Zoomed out, a "Village · N" pin marks the village.
 - Map changes animate (build/plant grow in, cleared trees fall, crops and cottages pop); all
   motion respects Settings → Reduce motion.
+- The island tells its story on the map ("Every action ripples."): glowing ripple threads run
+  from an event's recorded causes to it (History → Show on map, and automatically for big news);
+  hovering Clear/Farm shows where the tile's soil would wash; washed-off soil leaves brown gullies
+  and a lingering, spreading mud plume in the sea; fish schools swim in clear water and thin out;
+  island health colours the land (sepia when sick, lush when well). The first flood, fire, drought,
+  muddy coast etc. each get a one-line explanation with "Show me".
 
 Settings (saved to `user://settings.cfg`): master / music / effects / sea & rain volume,
 interface size (S/M/L/XL), colour-blind-safe layers, reduce motion, haptics, tutorial tips,

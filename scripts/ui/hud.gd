@@ -2071,6 +2071,52 @@ func notification_rects() -> Array[Rect2]:
 	return out
 
 
+# ================================================================== title card
+
+## The opening beat of a new game: the name and the promise, large over the island while the
+## camera flies in, then the first guide card fades up. Purely visual (the guide is already on).
+func show_title_card(seconds := 2.6) -> void:
+	if UiKit.reduce_motion or not is_inside_tree():
+		return
+	var box: Control = VBoxContainer.new()
+	box.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	(box as VBoxContainer).alignment = BoxContainer.ALIGNMENT_CENTER
+	box.add_theme_constant_override("separation", 2)
+	var t := UiKit.label("Keystone Isle", 64 if not portrait else 48, "Title")
+	t.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	t.add_theme_color_override("font_color", Color(1, 0.98, 0.93))
+	t.add_theme_color_override("font_shadow_color", Color(0, 0, 0, 0.45))
+	t.add_theme_constant_override("shadow_offset_y", 3)
+	t.auto_translate_mode = Node.AUTO_TRANSLATE_MODE_DISABLED
+	box.add_child(t)
+	var s := UiKit.label("Every action ripples.", 24, "")
+	s.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	s.add_theme_color_override("font_color", Color(1.0, 0.86, 0.52))
+	s.add_theme_color_override("font_shadow_color", Color(0, 0, 0, 0.5))
+	s.add_theme_constant_override("shadow_offset_y", 2)
+	box.add_child(s)
+	var back := PanelContainer.new()
+	back.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	back.add_theme_stylebox_override("panel", UiKit.box(Color(0.04, 0.08, 0.09, 0.42), 28, 22))
+	back.add_child(box)
+	root.add_child(back)
+	back.reset_size()
+	var bs := back.get_combined_minimum_size()
+	back.position = Vector2((root.size.x - bs.x) * 0.5, root.size.y * 0.13)
+	box = back  # animate the whole card
+	box.modulate.a = 0.0
+	_coach.modulate.a = 0.0
+	var tw := box.create_tween()
+	tw.tween_property(box, "modulate:a", 1.0, 0.6).set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_OUT)
+	tw.parallel().tween_property(box, "position:y", root.size.y * 0.11, seconds).set_trans(Tween.TRANS_SINE)
+	tw.tween_interval(maxf(0.2, seconds - 1.4))
+	tw.tween_property(box, "modulate:a", 0.0, 0.8).set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_IN)
+	tw.tween_callback(box.queue_free)
+	var tc := _coach.create_tween()
+	tc.tween_interval(seconds - 0.3)
+	tc.tween_property(_coach, "modulate:a", 1.0, 0.5)
+
+
 # ================================================================== first-time moments
 
 signal moment_show_requested

@@ -263,6 +263,7 @@ func start_tutorial() -> void:
 		# no wall of text: the guide opens on the map and teaches by doing, one step at a time
 		camera.position = world_view.position + world_view.top_center(sim.world.width / 2, sim.world.height / 2)
 		guide.start(GuideSteps.TUTORIAL)
+		hud.show_title_card()  # the name and the promise while the camera flies in to the village
 	else:
 		hud.show_popup(I18n.f("Tutorial: %s", I18n.t(s.scenario.title())), I18n.t(s.scenario.intro_text()), "compass")
 	autosave()
